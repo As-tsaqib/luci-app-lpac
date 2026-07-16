@@ -48,7 +48,7 @@ jobs:
             https://github.com/openwrt/luci.git build/luci
           rm -rf build/luci/applications/luci-app-lpac
           cp -a applications/luci-app-lpac build/luci/applications/
-          npm ci --prefix build/luci
+          npm install --prefix build/luci --ignore-scripts --no-audit --no-fund
 
       - name: Validate LuCI source and translations
         shell: bash
