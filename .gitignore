@@ -1,0 +1,8 @@
+.cache/
+artifacts/
+build/
+build-feed/
+dist/
+*.apk
+*.ipk
+uc.out

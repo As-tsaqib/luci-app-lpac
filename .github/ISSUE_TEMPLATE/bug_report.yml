@@ -1,0 +1,52 @@
+name: Bug report
+description: Report a reproducible luci-app-lpac problem
+title: '[bug] '
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove activation codes, confirmation codes, EIDs, ICCIDs, raw APDU data, and HTTP debug payloads before submitting.
+  - type: input
+    id: openwrt
+    attributes:
+      label: OpenWrt version
+      placeholder: OpenWrt 25.12.5 r...
+    validations:
+      required: true
+  - type: input
+    id: lpac
+    attributes:
+      label: lpac package version
+      placeholder: 2.3.0-r2
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: APDU backend
+      options:
+        - uqmi
+        - MBIM
+        - AT
+        - PC/SC
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Redacted logs
+      description: Do not enable or post sensitive APDU/HTTP debug output.

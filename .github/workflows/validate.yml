@@ -1,0 +1,122 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Source and backend tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Install host dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake gettext libjson-c-dev pkg-config shellcheck
+
+      - name: Prepare LuCI validation tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build
+          git clone --filter=blob:none --depth 1 \
+            https://github.com/openwrt/luci.git build/luci
+          rm -rf build/luci/applications/luci-app-lpac
+          cp -a applications/luci-app-lpac build/luci/applications/
+          npm ci --prefix build/luci
+
+      - name: Validate LuCI source and translations
+        shell: bash
+        run: |
+          set -euxo pipefail
+          (
+            cd build/luci
+            ./node_modules/.bin/eslint \
+              applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js \
+              applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/*.js
+            ./build/i18n-scan.pl applications/luci-app-lpac \
+              > "${GITHUB_WORKSPACE}/build/lpac.pot"
+          )
+
+          while IFS= read -r file; do
+            node --check "$file"
+          done < <(find applications/luci-app-lpac/htdocs -type f -name '*.js' -print)
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in Path('applications/luci-app-lpac/root').rglob('*.json'):
+              json.loads(path.read_text())
+          PY
+
+          diff -u applications/luci-app-lpac/po/templates/lpac.pot build/lpac.pot
+          msgfmt --check --check-format \
+            -o /dev/null applications/luci-app-lpac/po/templates/lpac.pot
+          shellcheck applications/luci-app-lpac/tests/run-tests.sh
+          git diff --check
+
+      - name: Build host ucode
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build/ucode
+          git -C build/ucode init
+          git -C build/ucode remote add origin https://github.com/jow-/ucode.git
+          git -C build/ucode fetch --depth 1 origin \
+            b885dd0fe1e974551fb1233ca5f3aa74d80b74d9
+          git -C build/ucode checkout --detach FETCH_HEAD
+
+          cmake -S build/ucode -B build/ucode-out \
+            -DBUILD_OPTIMIZE_SIZE=OFF \
+            -DDEBUG_SUPPORT=OFF \
+            -DFS_SUPPORT=OFF \
+            -DIO_SUPPORT=OFF \
+            -DMATH_SUPPORT=OFF \
+            -DUBUS_SUPPORT=OFF \
+            -DUCI_SUPPORT=OFF \
+            -DRTNL_SUPPORT=OFF \
+            -DNL80211_SUPPORT=OFF \
+            -DRESOLV_SUPPORT=OFF \
+            -DSTRUCT_SUPPORT=OFF \
+            -DULOOP_SUPPORT=OFF \
+            -DLOG_SUPPORT=OFF \
+            -DSOCKET_SUPPORT=OFF \
+            -DZLIB_SUPPORT=OFF \
+            -DDIGEST_SUPPORT=OFF
+          cmake --build build/ucode-out --parallel
+
+      - name: Run backend tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export PATH="${GITHUB_WORKSPACE}/build/ucode-out:${PATH}"
+          applications/luci-app-lpac/tests/run-tests.sh
+          ucode -c,dynlink=fs,dynlink=ubus,dynlink=uci \
+            -o /dev/null \
+            applications/luci-app-lpac/root/usr/share/rpcd/ucode/luci.lpac
