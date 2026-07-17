@@ -24,6 +24,14 @@ function profileStateLabel(state) {
 	}
 }
 
+function profileStateIndicator(state) {
+	const className = state === 'enabled'
+		? 'label success'
+		: state === 'disabled' ? 'label' : 'label warning';
+
+	return E('span', { 'class': className }, [ profileStateLabel(state) ]);
+}
+
 return view.extend({
 	load: function() {
 		return L.resolveDefault(lpac.listProfiles(), null);
@@ -242,7 +250,7 @@ return view.extend({
 					profileLabel(profile),
 					profile.serviceProviderName || '-',
 					profile.iccid || '-',
-					profileStateLabel(state),
+					profileStateIndicator(state),
 					actions
 				]);
 			}, this);

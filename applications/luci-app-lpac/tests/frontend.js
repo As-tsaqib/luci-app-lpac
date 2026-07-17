@@ -144,6 +144,49 @@ const profilesPage = profilesView.render({ success: true, data: [ profile ] });
 	assert.ok(buttons[0].attrs.disabled == null,
 		`${label} button must omit the disabled attribute when writable`);
 });
+assert.strictEqual(findAll(profilesPage, function(node) {
+	return node.tag === 'span' && node.attrs?.class === 'label' &&
+		textContent(node) === 'Disabled';
+}).length, 1, 'a disabled profile should use the neutral state badge');
+
+const enabledProfile = Object.assign({}, profile, {
+	iccid: '8912345678901234568',
+	profileState: 'enabled'
+});
+const enabledProfilesPage = profilesView.render({
+	success: true,
+	data: [ enabledProfile ]
+});
+assert.strictEqual(findAll(enabledProfilesPage, function(node) {
+	return node.tag === 'span' && node.attrs?.class === 'label success' &&
+		textContent(node) === 'Enabled';
+}).length, 1, 'an enabled profile should use the standard LuCI success badge');
+
+const disableButtons = byText(enabledProfilesPage, 'button', 'Disable');
+assert.strictEqual(disableButtons.length, 1,
+	'an enabled profile should retain its Disable action');
+assert.ok(disableButtons[0].attrs.disabled == null,
+	'the Disable action should be writable for an enabled profile');
+assert.ok(byText(enabledProfilesPage, 'button', 'Delete')[0].attrs.disabled != null,
+	'an enabled profile must not be deletable');
+disableButtons[0].attrs.click();
+assert.strictEqual(modal.title, 'Disable profile',
+	'Disable should open a confirmation modal before any operation');
+
+const unknownProfile = Object.assign({}, profile, {
+	iccid: '8912345678901234569',
+	profileState: 'unknown'
+});
+const unknownProfilesPage = profilesView.render({
+	success: true,
+	data: [ unknownProfile ]
+});
+assert.strictEqual(findAll(unknownProfilesPage, function(node) {
+	return node.tag === 'span' && node.attrs?.class === 'label warning' &&
+		textContent(node) === 'Unknown';
+}).length, 1, 'an unknown profile state should use a warning badge');
+assert.ok(byText(unknownProfilesPage, 'button', 'Unavailable')[0].attrs.disabled != null,
+	'an unknown profile state must not offer a state mutation');
 
 profilesView.showStateModal(profile, true);
 assert.ok(modal, 'profile state modal should render');
@@ -243,4 +286,4 @@ assert.strictEqual(findAll(settingsPage, function(node) {
 		textContent(node).startsWith('The AT backend is timing-sensitive');
 }).length, 1, 'AT compatibility guidance should render as field help');
 
-console.log('ok - frontend controls and warning hierarchy');
+console.log('ok - frontend controls, state badges, and warning hierarchy');
