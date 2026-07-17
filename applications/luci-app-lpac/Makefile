@@ -7,7 +7,7 @@ LUCI_DESCRIPTION:=Manage eUICC information and eSIM profiles with lpac
 LUCI_DEPENDS:=+luci-base +lpac
 LUCI_EXTRA_DEPENDS:=lpac (>=2.3.0-r2)
 
-PKG_MAINTAINER:=Rofiq <0xfiqks@gmail.com>
+PKG_MAINTAINER:=As-tsaqib <0xfiqks@gmail.com>
 PKG_LICENSE:=Apache-2.0
 
 include ../../luci.mk

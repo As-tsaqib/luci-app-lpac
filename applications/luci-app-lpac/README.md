@@ -24,12 +24,36 @@ Separately,
 [estkme-group/lpac#444](https://github.com/estkme-group/lpac/pull/444)
 tracks hardening of untrusted server-response handling.
 
+Removing a pending notification only deletes its record from the eUICC. It
+does not contact the provider or undo the profile operation, and discarding an
+unprocessed record can leave the provider state out of sync. A bulk Process
+action is intentionally absent while lpac TLS verification is disabled. The
+packaged bulk implementation can also complete only part of a batch before an
+error and does not guarantee the grouping and ordering required by SGP.22.
+
 Notification sequence `0` is valid and is displayed, but its explicit Remove
 action is disabled. The packaged lpac 2.3.0 reports false success without
 removing that sequence. Upstream fixed this after 2.3.0 in
 [estkme-group/lpac#429](https://github.com/estkme-group/lpac/pull/429), but the
 fix is not yet present in the OpenWrt package; see also
 [estkme-group/lpac#430](https://github.com/estkme-group/lpac/issues/430).
+
+lpac 2.3.0 may report `v0.0.0-unknown` because its generated version header
+collides with an applet header and release tarballs lack Git metadata. This is
+a dependency build issue rather than evidence that an eUICC operation failed.
+Upstream corrected version handling after 2.3.0 in
+[estkme-group/lpac#310](https://github.com/estkme-group/lpac/pull/310).
+
+## Compatibility
+
+The package targets LuCI `master` and requires `lpac >= 2.3.0-r2`. OpenWrt
+25.12 requires a compatible backport or custom package, while the stock 24.10
+lpac is too old. The application itself is architecture-independent.
+
+When driver discovery succeeds, Settings offers the reported AT, uqmi, MBIM,
+or PC/SC backends. Safe AT and MBIM device paths below `/dev` are accepted.
+The active OpenWrt uqmi backend remains restricted to `/dev/cdc-wdmN` because
+that downstream integration currently constructs a shell command.
 
 ## Architecture
 
@@ -68,6 +92,12 @@ The application does not reset modems or network interfaces. Some hardware
 requires a SIM power cycle or reconnect after enabling or disabling a profile;
 that lifecycle remains the responsibility of the modem/network stack.
 
+The profile refresh flag is an ES10c request indicating that terminal refresh
+is required; it is not a modem reboot. On a tested Fibocom L850-GL, enabling it
+allowed ModemManager to perform a logical SIM reprobe and restore the cellular
+connection in about eleven seconds without USB re-enumeration. Other eUICCs
+may reject the flag, so the choice remains explicit rather than universal.
+
 The Profiles view only offers deletion for a profile reported as disabled.
 Direct RPC calls bypass that browser state check; the backend relies on the
 eUICC to reject deletion of an enabled profile and normalizes the resulting
@@ -93,3 +123,8 @@ make package/luci-app-lpac/clean package/luci-app-lpac/compile V=s
 
 Real-device testing is required for every APDU backend that is claimed in a
 pull request.
+
+Read and write validation was performed on OpenWrt 25.12.5 with a Fibocom
+L850-GL and a modem-specific lpac 2.3.0-r2 package. This validates that
+combination only and does not claim support for every modem, eUICC, backend, or
+firmware.

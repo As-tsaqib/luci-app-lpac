@@ -36,7 +36,7 @@ return view.extend({
 				_('Remove notification sequence %s from the eUICC?').format(seq)
 			]),
 			E('p', { 'class': 'alert-message warning' }, [
-				_('Removing an unprocessed notification discards it locally without notifying the provider. Only continue if the notification was processed elsewhere or is no longer needed.')
+				_('Removing an unprocessed notification permanently discards its eUICC record without contacting the provider. It does not undo the profile operation and may leave the provider state out of sync. Only continue if the notification was processed elsewhere or is no longer needed.')
 			]),
 			E('div', { 'class': 'right' }, [
 				E('button', {
@@ -114,7 +114,7 @@ return view.extend({
 				_('Profile operations can create notifications that should normally be sent to the provider.')
 			]),
 			E('div', { 'class': 'alert-message warning' }, [
-				_('Network notification processing is intentionally unavailable until the packaged lpac verifies TLS peers. This page only lists and explicitly removes local notifications.')
+				_('Network notification processing is intentionally unavailable until the packaged lpac verifies TLS peers. Remove only discards a pending record from the eUICC; it does not contact the provider or undo the profile operation.')
 			]),
 			hasSequenceZero
 				? E('div', { 'class': 'alert-message warning' }, [

@@ -40,5 +40,7 @@ contribution must use OpenWrt Weblate for translated `.po` files.
 ## Commits and DCO
 
 Use a component-prefixed lowercase subject, a meaningful body, and
-`git commit -s`. OpenWrt LuCI requires a truthful first-and-last name and a
-non-noreply email linked to the GitHub account opening the pull request.
+`git commit -s`. LuCI prefers a first-and-last name and its pull request
+template permits a nickname. In either case, use an identity you can certify
+and a reachable non-noreply email linked to the GitHub account opening the pull
+request.

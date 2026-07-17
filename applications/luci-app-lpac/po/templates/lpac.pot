@@ -225,8 +225,8 @@ msgstr ""
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:117
 msgid ""
 "Network notification processing is intentionally unavailable until the "
-"packaged lpac verifies TLS peers. This page only lists and explicitly "
-"removes local notifications."
+"packaged lpac verifies TLS peers. Remove only discards a pending record from "
+"the eUICC; it does not contact the provider or undo the profile operation."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:145
@@ -345,9 +345,10 @@ msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:39
 msgid ""
-"Removing an unprocessed notification discards it locally without notifying "
-"the provider. Only continue if the notification was processed elsewhere or "
-"is no longer needed."
+"Removing an unprocessed notification permanently discards its eUICC record "
+"without contacting the provider. It does not undo the profile operation and "
+"may leave the provider state out of sync. Only continue if the notification "
+"was processed elsewhere or is no longer needed."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:50

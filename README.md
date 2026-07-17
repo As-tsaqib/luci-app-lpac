@@ -1,7 +1,7 @@
 # luci-app-lpac
 
-[![Validate](https://github.com/greencabe/luci-app-lpac/actions/workflows/validate.yml/badge.svg)](https://github.com/greencabe/luci-app-lpac/actions/workflows/validate.yml)
-[![Build](https://github.com/greencabe/luci-app-lpac/actions/workflows/build.yml/badge.svg)](https://github.com/greencabe/luci-app-lpac/actions/workflows/build.yml)
+[![Validate](https://github.com/As-tsaqib/luci-app-lpac/actions/workflows/validate.yml/badge.svg)](https://github.com/As-tsaqib/luci-app-lpac/actions/workflows/validate.yml)
+[![Build](https://github.com/As-tsaqib/luci-app-lpac/actions/workflows/build.yml/badge.svg)](https://github.com/As-tsaqib/luci-app-lpac/actions/workflows/build.yml)
 
 Native LuCI frontend for OpenWrt's `lpac` eSIM manager. The application uses
 the packaged `/usr/bin/lpac` entrypoint and `/etc/config/lpac`; it does not
@@ -65,9 +65,9 @@ opkg status lpac
 ## Development
 
 The repository runs source validation, 38 mocked rpcd/ucode checks, frontend
-DOM-attribute regression tests, and SDK
-builds for OpenWrt 25.12.5 and snapshot. See [CONTRIBUTING.md](CONTRIBUTING.md)
-for local commands and DCO requirements.
+DOM-attribute regression tests, and SDK builds for OpenWrt 25.12.5 and
+snapshot. See [CONTRIBUTING.md](CONTRIBUTING.md) for local commands and DCO
+requirements.
 
 Do not post activation codes, confirmation codes, EIDs, ICCIDs, raw APDU logs,
 or HTTP debug payloads in public issues.
