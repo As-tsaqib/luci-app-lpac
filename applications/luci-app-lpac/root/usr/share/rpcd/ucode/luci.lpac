@@ -17,6 +17,7 @@ const LPAC_PATH = '/usr/bin/lpac';
 const FLOCK_PATH = '/usr/bin/flock';
 const SETSID_PATH = '/usr/bin/setsid';
 const KILL_PATH = '/bin/kill';
+const SHELL_PATH = '/bin/sh';
 const LOCK_PATH = '/var/run/luci-lpac.lock';
 const DEFAULT_AID = 'A0000005591010FFFFFFFF8900000100';
 const DOWNLOAD_TIMEOUT_MS = 600000;
@@ -1264,15 +1265,33 @@ function signal_download_process(job) {
 	    type(job.pid) != 'int' || job.pid < 2 || job.kill_sent)
 		return !!job?.kill_sent;
 
+	const group = `-${job.pid}`;
+	let delivered = false;
+
+	/*
+	 * BusyBox accepts a negative process-group operand directly but rejects
+	 * `--`; procps may require `--`. Short-circuit after the first successful
+	 * fixed argv form so the signal is never deliberately delivered twice.
+	 */
 	try {
-		/* setsid makes the supervisor PID the process-group identifier. */
-		if (system([ KILL_PATH, '-KILL', `-${job.pid}` ]) == 0) {
-			job.kill_sent = true;
-			return true;
-		}
+		delivered = system([ KILL_PATH, '-KILL', group ]) == 0;
 	}
 	catch (e) {
-		/* Process and output callbacks remain authoritative. */
+		/* Try the procps-compatible form below. */
+	}
+
+	if (!delivered) {
+		try {
+			delivered = system([ KILL_PATH, '-KILL', '--', group ]) == 0;
+		}
+		catch (e) {
+			/* Process and output callbacks remain authoritative. */
+		}
+	}
+
+	if (delivered) {
+		job.kill_sent = true;
+		return true;
 	}
 
 	return false;
@@ -1696,7 +1715,8 @@ function download_start_preflight() {
 
 	if (fs.access(LPAC_PATH, 'x') !== true ||
 	    fs.access(SETSID_PATH, 'x') !== true ||
-	    fs.access(KILL_PATH, 'x') !== true)
+	    fs.access(KILL_PATH, 'x') !== true ||
+	    fs.access(SHELL_PATH, 'x') !== true)
 		return failure('not_installed',
 			'The lpac executable or its process supervisor is unavailable.');
 
@@ -1829,7 +1849,7 @@ function start_download(params, options) {
 	}
 
 	const argv = [
-		'/bin/sh', '-c', DOWNLOAD_SCRIPT, 'luci-lpac-download',
+		SHELL_PATH, '-c', DOWNLOAD_SCRIPT, 'luci-lpac-download',
 		`${child_input_fd}`, `${child_output_fd}`, LPAC_PATH
 	];
 

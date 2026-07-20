@@ -105,6 +105,7 @@ function reset() {
 	global.TEST_HANDLES = [];
 	global.TEST_LAST_HANDLE = null;
 	global.TEST_SYSTEM_EXIT = 0;
+	global.TEST_SYSTEM_EXITS = [];
 	global.TEST_SYSTEM_THROW = false;
 	global.TEST_SYSTEM_CALLS = [];
 	global.system = function(argv, timeout) {
@@ -113,7 +114,9 @@ function reset() {
 		if (global.TEST_SYSTEM_THROW)
 			die('system failed');
 
-		return global.TEST_SYSTEM_EXIT;
+		return length(global.TEST_SYSTEM_EXITS)
+			? shift(global.TEST_SYSTEM_EXITS)
+			: global.TEST_SYSTEM_EXIT;
 	};
 }
 
@@ -998,7 +1001,8 @@ const activation_token = result.data.decision_token;
 same(global.TEST_ACCESS_CALLS, [
 	{ path: '/usr/bin/lpac', mode: 'x' },
 	{ path: '/usr/bin/setsid', mode: 'x' },
-	{ path: '/bin/kill', mode: 'x' }
+	{ path: '/bin/kill', mode: 'x' },
+	{ path: '/bin/sh', mode: 'x' }
 ], 'download startup verifies only fixed packaged supervisor executables');
 check(global.TEST_LOCK_FLAGS == 'xn' && global.TEST_LOCK_CLOSED &&
 	global.TEST_LOCK_OPEN.mode == 'a' && global.TEST_PIPE_CALL_COUNT == 2 &&
@@ -1187,6 +1191,9 @@ check(length(global.TEST_DECISION_WRITES) == 1 &&
 global.TEST_TIMERS[1].callback();
 check(length(global.TEST_SYSTEM_CALLS) == 1,
 	'preview cleanup grace expiry kills the complete isolated process group');
+const portable_kill = global.TEST_SYSTEM_CALLS[0]?.argv;
+same(portable_kill, [ '/bin/kill', '-KILL', '-4321' ],
+	'BusyBox process-group kill uses one fixed positional argv form');
 emit_download_output(terminal('', -1, 'cancelled'));
 global.TEST_LAST_PROCESS.output(0);
 end_download_output();
@@ -1194,6 +1201,33 @@ result = invoke('get_download_status', { job_id: preview_timeout_job });
 check(!result.success && result.error == 'timeout' &&
 	result.reason == 'preview_timeout',
 	'preview timeout remains explicit and never claims an unknown install outcome');
+
+reset();
+global.TEST_SYSTEM_EXITS = [ 1, 0 ];
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+emit_download_output(download_progress('es10b_prepare_download', 'provider'));
+same(map(global.TEST_SYSTEM_CALLS, call => call.argv), [
+	[ '/bin/kill', '-KILL', '-4321' ],
+	[ '/bin/kill', '-KILL', '--', '-4321' ]
+], 'procps process-group kill falls back to the guarded fixed argv form');
+check(global.TEST_TIMERS[3].timeout == -1,
+	'a successful process-group kill does not arm the retry timer');
+global.TEST_LAST_PROCESS.output(DOWNLOAD_EXIT_FAILED);
+end_download_output();
+
+reset();
+global.TEST_SYSTEM_EXITS = [ 1, 1, 0 ];
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+emit_download_output(download_progress('es10b_prepare_download', 'provider'));
+check(length(global.TEST_SYSTEM_CALLS) == 2 &&
+	global.TEST_TIMERS[3].timeout == 1000,
+	'a failed process-group delivery arms the bounded retry timer');
+global.TEST_TIMERS[3].callback();
+check(length(global.TEST_SYSTEM_CALLS) == 3 &&
+	global.TEST_SYSTEM_CALLS[2].argv[2] == '-4321',
+	'the kill retry short-circuits after a later plain-form success');
+global.TEST_LAST_PROCESS.output(DOWNLOAD_EXIT_FAILED);
+end_download_output();
 
 reset();
 result = manual_download('smdp.example.com', 'MATCH', '', '');

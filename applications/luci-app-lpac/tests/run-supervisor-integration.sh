@@ -25,13 +25,20 @@ valid_pid() {
 	esac
 }
 
+kill_group() {
+	group=$1
+
+	"$KILL_PATH" -KILL "-$group" 2>/dev/null && return 0
+	"$KILL_PATH" -KILL -- "-$group" 2>/dev/null
+}
+
 cleanup_group() {
 	pid_file=$1
 
 	[ -s "$pid_file" ] || return 0
 	read -r leader _child < "$pid_file" || return 0
 	valid_pid "$leader" || return 0
-	"$KILL_PATH" -KILL "-$leader" 2>/dev/null || true
+	kill_group "$leader" || true
 }
 
 cleanup() {
@@ -131,7 +138,7 @@ if try_lock; then
 	exit 1
 fi
 
-"$KILL_PATH" -KILL "-$lock_leader"
+kill_group "$lock_leader"
 wait_for_group_exit "$lock_leader"
 
 attempt=0

@@ -422,7 +422,29 @@ function run_raw_group_signal(setsid_path, shell_path, kill_path, pid_file) {
 
 		if (ready == 0) {
 			kill_sent = true;
-			check(system([ kill_path, '-KILL', `-${process_pid}` ]) == 0,
+			let delivered = false;
+
+			try {
+				delivered = system([
+					kill_path, '-KILL', `-${process_pid}`
+				]) == 0;
+			}
+			catch (e) {
+				/* Try the procps-compatible form below. */
+			}
+
+			if (!delivered) {
+				try {
+					delivered = system([
+						kill_path, '-KILL', '--', `-${process_pid}`
+					]) == 0;
+				}
+				catch (e) {
+					/* The assertion below reports delivery failure. */
+				}
+			}
+
+			check(delivered,
 				'the watchdog can signal the setsid process group by uloop PID');
 		}
 		else if (++polls < 200)
