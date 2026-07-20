@@ -39,6 +39,35 @@ function profileField(label, value) {
 	]);
 }
 
+function profileIdentity(profile, label) {
+	const uri = lpac.profileIconUri(profile.icon);
+	const fallback = E('span', {
+		'class': 'lpac-profile-icon lpac-profile-icon-fallback',
+		'aria-hidden': 'true',
+		'style': uri ? 'display:none' : ''
+	});
+	const children = [];
+
+	if (uri) {
+		children.push(E('img', {
+			'class': 'lpac-profile-icon',
+			'src': uri,
+			'alt': '',
+			'width': 40,
+			'height': 40,
+			'loading': 'lazy',
+			'error': function(event) {
+				event.currentTarget.style.display = 'none';
+				fallback.style.display = '';
+			}
+		}));
+	}
+
+	children.push(fallback, E('span', {}, [ label ]));
+
+	return E('span', { 'class': 'lpac-profile-identity' }, children);
+}
+
 return view.extend({
 	load: function() {
 		return L.resolveDefault(lpac.listProfiles(), null);
@@ -121,7 +150,7 @@ return view.extend({
 				'class': 'cbi-value-description',
 				'role': 'note'
 			}, [
-				_('lpac may create a provider notification after this change. Secure network notification processing is not available in this version, so the notification may remain pending on the eUICC.')
+				_('lpac may create a provider notification after this change. Open Notifications afterwards to send any pending record to its provider.')
 			]),
 			E('div', { 'class': 'right' }, [
 				E('button', {
@@ -195,7 +224,7 @@ return view.extend({
 				_('Permanently delete profile “%s”? This action cannot be undone.').format(profileLabel(profile))
 			]),
 			E('p', { 'class': 'alert-message warning' }, [
-				_('lpac creates a provider notification after deletion. Secure network notification processing is not available in this initial version, so the notification will remain pending on the eUICC.')
+				_('lpac creates a provider notification after deletion. Open Notifications afterwards and process that record before removing it locally.')
 			]),
 			E('div', { 'class': 'right' }, [
 				E('button', {
@@ -264,7 +293,7 @@ return view.extend({
 				]);
 
 				rows.push([
-					[ name, profileField(_('Profile'), name) ],
+					[ name, profileField(_('Profile'), profileIdentity(profile, name)) ],
 					[ provider, profileField(_('Provider'), provider) ],
 					[ iccid, profileField(_('ICCID'), iccid) ],
 					[ state, profileField(_('State'), profileStateIndicator(state)) ],
@@ -278,6 +307,9 @@ return view.extend({
 				? _('No eSIM profiles found.')
 				: _('Profile data is unavailable.')
 		]));
+
+		if (result?.success === true)
+			lpac.markDownloadVerification('profiles');
 
 		return E([
 			E('link', {

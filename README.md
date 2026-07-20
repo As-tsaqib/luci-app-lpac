@@ -22,25 +22,28 @@ architecture, locking model, supported operations, and security boundaries.
 
 - Read eUICC information and compiled lpac drivers.
 - List, enable, disable, rename, and delete profiles.
+- Display validated embedded PNG/JPEG profile icons.
+- Discover orders through SM-DS and review their provider metadata before
+  installation without exposing EventIDs to the browser.
 - Download profiles from a complete LPA activation code, a QR image decoded
-  locally in the browser, or the non-interactive manual parameters supported
-  by lpac.
-- List and explicitly remove local eUICC notifications.
+  locally in the browser, manual parameters, or a discovery result; every path
+  requires an explicit live-preview decision.
+- List, process to the provider, and explicitly remove local eUICC
+  notifications, including sequence zero.
 - Configure validated official AT, uqmi, MBIM, and PC/SC settings.
 - Serialize LuCI eUICC operations through a root-owned runtime lock.
 
-SM-DS discovery, network notification processing, modem resets, and
-network-interface control remain out of scope. Profile download deliberately
-mirrors the packaged `lpac profile download` interface and inherits the HTTP
-and TLS behavior of the installed lpac transport; LuCI neither replaces nor
-independently verifies that transport.
+Modem resets, network-interface control, destructive eUICC purge, and raw
+notification dump/replay remain intentionally out of scope. LuCI relies on the
+matching packaged lpac transport; the bundled build verifies provider chains
+and hostnames against OpenWrt's CA bundle and offers no insecure fallback.
 
 ## Compatibility
 
 | OpenWrt | Format | Bundled lpac | Status |
 | --- | --- | --- | --- |
-| 25.12.5 | APK | `2.3.0.438-r2` | Release target |
-| 24.10.7 | IPK | `2.3.0.438-r2` | Release target |
+| 25.12.5 | APK | `2.3.0.444-r1` | Release target |
+| 24.10.7 | IPK | `2.3.0.444-r1` | Release target |
 
 Release ZIPs are provided for `aarch64_generic`, `aarch64_cortex-a53`,
 `aarch64_cortex-a72`, `arm_cortex-a7_neon-vfpv4`, `mipsel_24kc`, and
@@ -75,11 +78,14 @@ uci commit lpac
 The lpac package is built from the official v2.3.0 archive with OpenWrt's
 uqmi backend plus its configured-device correction, the merged upstream
 environment parser fix from pull request 308, the version fix from pull
-request 310, and the MBIM compatibility changes merged in pull request 438. See
-[packages/lpac/README.md](packages/lpac/README.md) for provenance and scope.
-The release-branch LuCI package requires `lpac >=2.3.0.438-r2`, ensuring that
-the Settings checkbox is paired with a wrapper that exports the upstream MBIM
-slot-mapping option and a binary that correctly parses UCI boolean values.
+request 310, the MBIM compatibility changes merged in pull request 438,
+notification sequence handling from pull request 429, provider-status
+hardening from pull request 444, and downstream discovery, preview, TLS, and
+response-memory fixes. See [packages/lpac/README.md](packages/lpac/README.md)
+for provenance and scope. The release-branch LuCI package requires
+`lpac >=2.3.0.444-r1`, ensuring
+that its newer RPC contracts are paired with the matching CLI and safe network
+transport behavior.
 
 ## Development
 

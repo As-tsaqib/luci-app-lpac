@@ -6,6 +6,8 @@
 'require ui';
 'require lpac';
 
+const isReadonlyView = !L.hasViewPermission() || null;
+
 function resultError(title, result) {
 	return E('div', { 'class': 'alert-message warning' }, [
 		E('strong', {}, [ title ]),
@@ -38,6 +40,9 @@ function detailsTable(fields) {
 }
 
 return view.extend({
+	currentDefaultSmdp: null,
+	defaultSmdpUpdating: false,
+
 	load: function() {
 		return Promise.all([
 			L.resolveDefault(lpac.getVersion(), null),
@@ -45,6 +50,215 @@ return view.extend({
 			L.resolveDefault(lpac.getInfo(), null),
 			L.resolveDefault(lpac.getConfig(), null)
 		]);
+	},
+
+	defaultSmdpField: function(address) {
+		const children = [ E('span', {
+			'id': 'lpac-default-smdp-value'
+		}, [ valueOrUnknown(address) ]) ];
+
+		if (!isReadonlyView) {
+			children.push(' ', E('button', {
+				'id': 'lpac-default-smdp-edit',
+				'class': 'btn cbi-button cbi-button-edit',
+				'type': 'button',
+				'click': ui.createHandlerFn(this, 'showDefaultSmdpModal')
+			}, [ _('Change') ]));
+		}
+
+		return E('span', {
+			'style': 'display:inline-flex;align-items:center;gap:.4em;flex-wrap:wrap'
+		}, children);
+	},
+
+	setDefaultSmdpBusy: function(busy) {
+		this.defaultSmdpUpdating = busy;
+		const edit = document.getElementById('lpac-default-smdp-edit');
+
+		if (edit)
+			edit.disabled = busy;
+	},
+
+	updateDefaultSmdpDisplay: function(address) {
+		this.currentDefaultSmdp = address;
+		const value = document.getElementById('lpac-default-smdp-value');
+
+		if (value)
+			value.textContent = valueOrUnknown(address);
+	},
+
+	showDefaultSmdpModal: function(prefill) {
+		if (isReadonlyView || this.defaultSmdpUpdating)
+			return;
+
+		const oldAddress = this.currentDefaultSmdp;
+		const input = E('input', {
+			'id': 'lpac-default-smdp-input',
+			'class': 'cbi-input-text',
+			'type': 'text',
+			'maxlength': 255,
+			'autocomplete': 'off',
+			'spellcheck': 'false',
+			'value': typeof prefill === 'string' ? prefill : oldAddress || '',
+			'placeholder': 'smdp.example.com:443'
+		});
+
+		ui.showModal(_('Change default SM-DP+ address'), [
+			E('div', { 'class': 'cbi-value' }, [
+				E('span', { 'class': 'cbi-value-title' }, [ _('Current address') ]),
+				E('span', { 'class': 'cbi-value-field' }, [
+					valueOrUnknown(oldAddress)
+				])
+			]),
+			E('div', { 'class': 'cbi-value' }, [
+				E('label', {
+					'class': 'cbi-value-title',
+					'for': 'lpac-default-smdp-input'
+				}, [ _('New address') ]),
+				E('div', { 'class': 'cbi-value-field' }, [ input ])
+			]),
+			E('p', { 'class': 'alert-message warning', 'role': 'note' }, [
+				_('This changes persistent state on the eUICC, not a LuCI setting. The address remains configured after a router reboot.')
+			]),
+			E('p', { 'class': 'cbi-value-description', 'role': 'note' }, [
+				_('A manual profile download with an empty SM-DP+ server field uses this default address. Clearing the eUICC default is not supported by this form.')
+			]),
+			E('div', { 'class': 'right' }, [
+				E('button', {
+					'class': 'btn',
+					'click': ui.hideModal
+				}, [ _('Cancel') ]),
+				' ',
+				E('button', {
+					'class': 'btn cbi-button-positive important',
+					'click': ui.createHandlerFn(this,
+						'reviewDefaultSmdpChange', oldAddress, input)
+				}, [ _('Review change') ])
+			])
+		]);
+
+		input.focus();
+	},
+
+	reviewDefaultSmdpChange: function(oldAddress, input) {
+		if (isReadonlyView || this.defaultSmdpUpdating)
+			return;
+
+		const address = String(input.value || '');
+		let message = null;
+
+		input.removeAttribute('aria-invalid');
+
+		if (!address.trim())
+			message = _('The default SM-DP+ address cannot be empty.');
+		else if (!lpac.validSmdpAddress(address))
+			message = _('Enter a valid SM-DP+ host or bracketed IPv6 address with an optional port.');
+		else if (address === oldAddress)
+			message = _('Enter a different address before continuing.');
+
+		if (message) {
+			input.setAttribute('aria-invalid', 'true');
+			input.focus();
+			ui.addNotification(null, E('p', {}, [ message ]), 'error');
+			return;
+		}
+
+		ui.showModal(_('Confirm persistent SM-DP+ change'), [
+			E('p', {}, [
+				_('Set the eUICC default SM-DP+ address to the new value below?')
+			]),
+			detailsTable([
+				_('Current address'), oldAddress,
+				_('New address'), address
+			]),
+			E('p', { 'class': 'alert-message warning', 'role': 'alert' }, [
+				_('Confirming writes persistent eUICC state and changes which server manual downloads use when no SM-DP+ address is supplied.')
+			]),
+			E('div', { 'class': 'right' }, [
+				E('button', {
+					'class': 'btn',
+					'click': ui.createHandlerFn(this,
+						'showDefaultSmdpModal', address)
+				}, [ _('Back') ]),
+				' ',
+				E('button', {
+					'class': 'btn cbi-button-positive important',
+					'click': ui.createHandlerFn(this,
+						'applyDefaultSmdpChange', address)
+				}, [ _('Set persistent address') ])
+			])
+		]);
+	},
+
+	applyDefaultSmdpChange: function(address) {
+		if (isReadonlyView || this.defaultSmdpUpdating ||
+		    !lpac.validSmdpAddress(address) || !address.length)
+			return;
+
+		this.setDefaultSmdpBusy(true);
+		ui.showModal(_('Updating default SM-DP+ address'), [
+			E('p', { 'class': 'spinning' }, [ _('Waiting for lpac…') ])
+		]);
+
+		return lpac.setDefaultSmdp(address).then(function(result) {
+			if (!result || !result.success) {
+				const ambiguous = [ 'transport_error', 'timeout', 'execution_failed' ]
+					.includes(result?.error);
+
+				ui.hideModal();
+				ui.addNotification(null, E('p', {}, [
+					ambiguous
+						? _('The update outcome could not be confirmed. Refresh eUICC information before retrying.')
+						: _('The default SM-DP+ address was not confirmed as changed.'),
+					' ',
+					lpac.errorMessage(result)
+				]), ambiguous ? 'warning' : 'error');
+				return;
+			}
+
+			return lpac.getInfo().then(function(infoResult) {
+				ui.hideModal();
+
+				if (!infoResult || !infoResult.success) {
+					ui.addNotification(null, E('p', {}, [
+						_('lpac accepted the update, but the eUICC readback failed. Do not assume the displayed address is current; refresh before retrying.'),
+						' ',
+						lpac.errorMessage(infoResult)
+					]), 'warning');
+					return;
+				}
+
+				const readback = infoResult.data?.EuiccConfiguredAddresses?.defaultDpAddress;
+				const hasReadback = typeof readback === 'string' &&
+					readback.length <= 255 && !/[\u0000-\u001F\u007F]/.test(readback);
+
+				if (hasReadback)
+					this.updateDefaultSmdpDisplay(readback);
+
+				if (hasReadback && readback === address) {
+					ui.addNotification(null, E('p', {}, [
+						_('The default SM-DP+ address was updated and verified by eUICC readback.')
+					]), 'info');
+				}
+				else {
+					ui.addNotification(null, E('p', {}, [
+						_('lpac accepted the update, but eUICC readback did not match the requested address.'),
+						' ', _('Requested:'), ' ', address, '. ',
+						_('Read back:'), ' ', hasReadback
+							? valueOrUnknown(readback)
+							: _('Unavailable'), '. ',
+						_('No successful change is being claimed; refresh and review the current value before retrying.')
+					]), 'warning');
+				}
+			}.bind(this));
+		}.bind(this)).catch(function() {
+			ui.hideModal();
+			ui.addNotification(null, E('p', {}, [
+				_('The update or its readback could not be completed. Its outcome is not being claimed; refresh eUICC information before retrying.')
+			]), 'warning');
+		}).finally(function() {
+			this.setDefaultSmdpBusy(false);
+		}.bind(this));
 	},
 
 	render: function(results) {
@@ -92,6 +306,10 @@ return view.extend({
 			const info2 = info.EUICCInfo2 || {};
 			const resources = info2.extCardResource || {};
 
+			this.currentDefaultSmdp = typeof addresses.defaultDpAddress === 'string'
+				? addresses.defaultDpAddress
+				: null;
+
 			nodes.push(E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, [ _('eUICC information') ]),
 				detailsTable([
@@ -99,7 +317,8 @@ return view.extend({
 					_('Firmware version'), info2.euiccFirmwareVer,
 					_('Profile specification'), info2.profileVersion,
 					_('SVN version'), info2.svn,
-					_('Default SM-DP+ address'), addresses.defaultDpAddress,
+					_('Default SM-DP+ address'),
+						this.defaultSmdpField(this.currentDefaultSmdp),
 					_('Root SM-DS address'), addresses.rootDsAddress,
 					_('Free non-volatile memory'), formatBytes(resources.freeNonVolatileMemory),
 					_('Free volatile memory'), formatBytes(resources.freeVolatileMemory)

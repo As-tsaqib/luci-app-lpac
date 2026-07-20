@@ -21,8 +21,13 @@
 					"disable_profile",
 					"nickname_profile",
 					"delete_profile",
+					"download_discovered_profile",
 					"download_profile",
+					"discover_profiles",
+					"process_notification",
 					"remove_notification",
+					"respond_download_preview",
+					"set_default_smdp",
 					"set_config"
 				]
 			}

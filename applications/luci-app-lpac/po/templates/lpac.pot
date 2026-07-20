@@ -1,10 +1,30 @@
 msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8"
 
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:113
+msgid "%d notifications were processed successfully."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:121
+msgid "%d of %d notifications completed before processing stopped."
+msgstr ""
+
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:187
 msgid ""
 "32-character hexadecimal application identifier used to select the eUICC ISD-"
 "R applet."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:124
+msgid ""
+"A manual profile download with an empty SM-DP+ server field uses this "
+"default address. Clearing the eUICC default is not supported by this form."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:432
+msgid ""
+"A profile download is waiting for its original tab to confirm it; otherwise "
+"it will cancel automatically."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:181
@@ -23,33 +43,32 @@ msgstr ""
 msgid "AT debug"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:81
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:227
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:246
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:256
 msgid "Actions"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:996
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1534
 msgid "Activation code"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:915
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1446
 msgid "Activation code or QR"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1039
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1595
 msgid "Additional parameters"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:254
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:283
 msgid "An ICCID is required to rename this profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:138
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:616
 msgid "Another lpac operation is already running."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:361
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:978
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:447
 msgid ""
 "Another profile download is running. Monitoring it before this form can be "
 "submitted."
@@ -59,63 +78,128 @@ msgstr ""
 msgid "Applying validated configuration…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:71
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:605
+msgid "Authorizing profile installation…"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:285
 msgid "Available APDU backends"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:72
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:286
 msgid "Available HTTP backends"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:67
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:182
+msgid "Back"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:281
 msgid "Backend status"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:660
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:45
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:130
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:173
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:204
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:423
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1526
+msgid ""
+"Browser site storage is unavailable. Downloads remain disabled because LuCI "
+"cannot safely retain verification across pages; enable storage, reload LuCI, "
+"and check Profiles and Notifications before retrying."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1022
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1100
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:178
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:207
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:130
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:159
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:202
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:233
 msgid "Cancel"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:118
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:564
+msgid "Cancel download"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:606
+msgid "Cancelling the profile download session…"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:66
+msgid "Change"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:106
+msgid "Change default SM-DP+ address"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:147
 msgid ""
 "Changing the active profile can interrupt mobile connectivity. Some modems "
 "require a separate SIM power cycle or reconnect afterwards."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1002
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1540
 msgid "Choose QR image"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1006
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1544
 msgid ""
 "Choose an existing QR image or take a new photo. Decoding happens locally in "
 "this browser."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1055
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1611
 msgid "Clear"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1040
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:166
+msgid "Confirm persistent SM-DP+ change"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1596
 msgid "Confirmation code"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:587
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:855
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1012
 msgid "Confirmation code is too long or contains control characters."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:746
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:175
+msgid ""
+"Confirming writes persistent eUICC state and changes which server manual "
+"downloads use when no SM-DP+ address is supplied."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1086
+msgid "Connect to the activation-code server and retrieve a profile preview?"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1087
+msgid ""
+"Connect with the supplied manual parameters and retrieve a profile preview?"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1219
 msgid ""
 "Connection to the lpac service was lost. The download may still be running; "
 "status checks will continue automatically."
 msgstr ""
 
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:963
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1510
+msgid "Contacting the SM-DS and checking for pending download orders…"
+msgstr ""
+
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:202
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:209
 msgid "Control device"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:108
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:171
+msgid "Current address"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:185
@@ -134,25 +218,25 @@ msgid ""
 "troubleshooting."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:487
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:749
 msgid "Decoding QR code…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:102
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:320
 msgid "Default SM-DP+ address"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:20
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:211
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:263
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:240
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:292
 msgid "Delete"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:193
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:222
 msgid "Delete profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:209
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:238
 msgid "Deleting profile"
 msgstr ""
 
@@ -163,16 +247,16 @@ msgid ""
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:18
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:145
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:249
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:174
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:278
 msgid "Disable"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:88
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:117
 msgid "Disable profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:92
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:121
 msgid "Disable profile “%s”?"
 msgstr ""
 
@@ -180,37 +264,41 @@ msgstr ""
 msgid "Disabled"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:141
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:170
 msgid "Disabling profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:665
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:656
+msgid "Discover profiles"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1584
+msgid ""
+"Discovered EventIDs remain only in expiring backend memory. LuCI receives "
+"opaque entry identifiers and never stores those matching credentials in the "
+"browser."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:903
+msgid "Discovered download orders"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:76
+msgid ""
+"Do not close this page or retry a notification whose provider outcome is "
+"reported as unknown."
+msgstr ""
+
 #: applications/luci-app-lpac/root/usr/share/luci/menu.d/luci-app-lpac.json:41
 msgid "Download"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:960
-msgid ""
-"Download and install a profile with the lpac profile download operation. Use "
-"a complete LPA activation code, import it from a QR image, or provide the "
-"non-interactive lpac parameters manually."
-msgstr ""
-
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:646
-msgid "Download and install the profile described by this activation code?"
-msgstr ""
-
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:643
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:958
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1492
 msgid "Download eSIM profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:991
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1529
 msgid "Download method"
-msgstr ""
-
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1063
-msgid "Download profile"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:184
@@ -219,21 +307,21 @@ msgid ""
 "offered without verification."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:98
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:316
 msgid "EID"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:16
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:145
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:249
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:174
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:278
 msgid "Enable"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:88
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:117
 msgid "Enable profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:91
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:120
 msgid "Enable profile “%s”?"
 msgstr ""
 
@@ -241,23 +329,40 @@ msgstr ""
 msgid "Enabled"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:141
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:170
 msgid "Enabling profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:569
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:157
+msgid "Enter a different address before continuing."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:826
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:837
 msgid "Enter a valid LPA:1$… activation code."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:99
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:155
+msgid ""
+"Enter a valid SM-DP+ host or bracketed IPv6 address with an optional port."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1494
+msgid ""
+"Find and install profiles through SM-DS discovery, a complete LPA activation "
+"code, a locally decoded QR image, or manual lpac parameters. Every path "
+"pauses for a provider-metadata preview before installation."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:317
 msgid "Firmware version"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:104
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:323
 msgid "Free non-volatile memory"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:105
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:324
 msgid "Free volatile memory"
 msgstr ""
 
@@ -273,34 +378,57 @@ msgstr ""
 msgid "HTTP debug"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:79
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:69
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:225
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:269
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:545
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:244
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:98
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:254
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:298
 msgid "ICCID"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1044
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1600
 msgid "IMEI"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:591
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:859
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:884
 msgid "IMEI must contain 14 to 16 digits."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:72
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:101
 msgid "ISD-P AID"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:172
+msgid ""
+"If delivery has an unknown outcome, do not process that record again "
+"automatically. If delivery succeeded but removal failed, use the separate "
+"Remove action."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:14
 msgid "Install"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:997
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:558
+msgid ""
+"Install continues this same authenticated lpac session. Cancel rejects it "
+"before PrepareDownload; opening a second session is not used for preview."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:569
+msgid "Install profile"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:569
+msgid "Install without metadata"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1535
 msgid "LPA string"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:158
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:187
 msgid "Leave empty to clear the nickname"
 msgstr ""
 
@@ -308,22 +436,22 @@ msgstr ""
 msgid "MBIM backend"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:64
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:278
 msgid ""
 "Manage the eUICC through the official OpenWrt lpac package. Modem and "
 "network lifecycle operations remain outside this application."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:917
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1027
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1448
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1565
 msgid "Manual parameters"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1032
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1570
 msgid "Matching ID"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:992
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1530
 msgid "Method"
 msgstr ""
 
@@ -331,71 +459,90 @@ msgstr ""
 msgid "Modem"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:166
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:117
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:172
+msgid "New address"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:195
 msgid "Nickname"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:278
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:307
 msgid "No eSIM profiles found."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:107
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:907
+msgid "No pending download orders were returned by the SM-DS."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:288
 msgid "No pending notifications found."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:131
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:603
 msgid "No response from the lpac service."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:250
+msgid ""
+"No successful change is being claimed; refresh and review the current value "
+"before retrying."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:196
 msgid "No supported APDU drivers were reported by lpac."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:496
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:758
 msgid "No valid eSIM activation code was found in the image."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:80
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:245
 msgid "Notification address"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:108
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:289
 msgid "Notification data is unavailable."
-msgstr ""
-
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:121
-msgid ""
-"Notification sequence 0 is valid and remains visible, but explicit removal "
-"is disabled because the packaged lpac reports false success for that "
-"sequence."
 msgstr ""
 
 #: applications/luci-app-lpac/root/usr/share/luci/menu.d/luci-app-lpac.json:50
 msgid "Notifications"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:261
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:290
 msgid "Only a disabled profile can be deleted"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:78
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1019
+msgid ""
+"Open the discovered order at %s and retrieve its profile preview? No "
+"installation occurs until you approve that preview."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:243
 msgid "Operation"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1041
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1045
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1597
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1601
 msgid "Optional"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1047
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1603
 msgid "Optional 14- to 16-digit device identifier passed to lpac with -i."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1035
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1573
 msgid "Optional activation token passed to lpac with -m."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1031
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1582
+msgid ""
+"Optional. When empty, lpac uses the GSMA discovery service lpa.ds.gsma.com."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1569
 msgid ""
 "Optional. When empty, lpac uses the default SM-DP+ address configured on the "
 "eUICC."
@@ -405,38 +552,97 @@ msgstr ""
 msgid "Options not managed by this page are preserved when settings are saved."
 msgstr ""
 
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:918
+msgid "Order %d"
+msgstr ""
+
 #: applications/luci-app-lpac/root/usr/share/luci/menu.d/luci-app-lpac.json:23
 msgid "Overview"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:998
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1536
 msgid "Paste the complete LPA string supplied by the provider."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:195
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:224
 msgid "Permanently delete profile “%s”? This action cannot be undone."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:223
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:267
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:185
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:260
+msgid "Process"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:185
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:300
+msgid "Process all"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:160
+msgid "Process notification"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:160
+msgid "Process notifications"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:311
+msgid ""
+"Process sends a notification to its provider over verified HTTPS. Remove "
+"only discards the local eUICC record and must not be used before provider "
+"processing unless you deliberately accept that loss."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:72
+msgid "Processing notification"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:89
+msgid "Processing notification %d of %d…"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:68
+msgid "Processing notification 1 of %d…"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:73
+msgid "Processing notifications"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:140
+msgid ""
+"Processing stopped. Refresh Notifications and review the remaining records "
+"before using Process all again."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:252
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:296
 msgid "Profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:279
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:546
+msgid "Profile class"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:308
 msgid "Profile data is unavailable."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:98
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:127
 msgid "Profile identifier"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:114
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:543
+msgid "Profile name"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:308
 msgid ""
 "Profile operations can create notifications that should normally be sent to "
 "the provider."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:100
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:318
 msgid "Profile specification"
 msgstr ""
 
@@ -444,55 +650,71 @@ msgstr ""
 msgid "Profiles"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:289
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:321
 msgid ""
 "Profiles are read directly from the eUICC using the configured lpac APDU "
 "backend."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1043
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1599
 msgid ""
 "Provide this when the activation code or download order requires "
 "confirmation."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:224
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:268
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:544
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:253
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:297
 msgid "Provider"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:506
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1497
+msgid ""
+"Provider connections require a certificate chain and hostname accepted by "
+"OpenWrt's system CA bundle. A wrong router clock or missing CA store causes "
+"the operation to fail closed."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:768
 msgid "QR code decoded. Enter the confirmation code required by this profile."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:507
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:769
 msgid "QR code decoded. The activation-code field has been filled."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:999
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1537
 msgid "QR image"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:134
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:116
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:301
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:247
+msgid "Read back:"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:325
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:335
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:333
 msgid "Refresh"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:65
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:100
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:227
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:265
 msgid "Remove"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:34
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:169
+msgid "Remove each eUICC record after successful provider processing"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:196
 msgid "Remove notification"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:36
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:198
 msgid "Remove notification sequence %s from the eUICC?"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:39
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:201
 msgid ""
 "Removing an unprocessed notification permanently discards its eUICC record "
 "without contacting the provider. It does not undo the profile operation and "
@@ -500,11 +722,11 @@ msgid ""
 "was processed elsewhere or is no longer needed."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:50
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:212
 msgid "Removing notification"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:256
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:285
 msgid "Rename"
 msgstr ""
 
@@ -512,33 +734,80 @@ msgstr ""
 msgid "Reported drivers are offered; an unreported current value is retained."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:109
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:138
 msgid "Request an eUICC refresh"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:112
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:246
+msgid "Requested:"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:141
 msgid ""
 "Requests a logical UICC refresh after the profile change; it does not reboot "
 "the modem. Some eUICCs require this flag, while others reject it."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:103
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1028
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1105
+msgid "Retrieve preview"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:136
+msgid "Review change"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1017
+msgid "Review discovered profile"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:573
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1083
+msgid "Review eSIM profile"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:657
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:926
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1619
+msgid "Review profile"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:322
 msgid "Root SM-DS address"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1028
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1566
 msgid "SM-DP+ address"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:650
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:556
+msgid "SM-DP+ server"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1090
 msgid "SM-DP+ server:"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:101
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1579
+msgid "SM-DS address"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1449
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1578
+msgid "SM-DS discovery"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:912
+msgid ""
+"SM-DS does not reveal profile names here. Review an order to retrieve its "
+"provider metadata before installation."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:319
 msgid "SVN version"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:183
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:212
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:227
 msgid "Save"
 msgstr ""
@@ -547,37 +816,33 @@ msgstr ""
 msgid "Saving lpac settings"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:963
-msgid ""
-"Security warning: lpac does not currently verify the profile-download "
-"server's TLS certificate or hostname. Only continue with a trusted "
-"activation source and network."
-msgstr ""
-
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:474
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:736
 msgid "Select a PNG, JPEG, or WebP image."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:582
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:850
 msgid "Select a valid download method."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:70
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:284
 msgid "Selected APDU backend"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1012
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1550
 msgid "Selected QR image preview"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:117
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:162
 msgid ""
-"Sending notifications is disabled because the packaged lpac does not "
-"securely verify RSP TLS certificates. Remove only discards the eUICC record; "
-"it does not contact the provider."
+"Send %d pending notifications to their providers in sequence? Processing "
+"stops at the first failure."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:77
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:163
+msgid "Send notification sequence %s to its provider?"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:242
 msgid "Sequence"
 msgstr ""
 
@@ -585,8 +850,16 @@ msgstr ""
 msgid "Serial device"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:161
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:188
+msgid "Set persistent address"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:190
 msgid "Set profile nickname"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:168
+msgid "Set the eUICC default SM-DP+ address to the new value below?"
 msgstr ""
 
 #: applications/luci-app-lpac/root/usr/share/luci/menu.d/luci-app-lpac.json:59
@@ -597,20 +870,16 @@ msgstr ""
 msgid "Skip MBIM slot mapping"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:647
-msgid "Start profile download using the supplied manual parameters?"
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1146
+msgid "Starting the secure lpac preview session…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:678
-msgid "Starting the lpac download…"
-msgstr ""
-
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:226
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:270
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:255
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:299
 msgid "State"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1004
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1542
 msgid "Take QR photo"
 msgstr ""
 
@@ -620,24 +889,28 @@ msgid ""
 "operation on all modems."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:207
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:187
 msgid "The QR decoder could not be loaded."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:202
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:182
 msgid "The QR decoder did not initialize."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:243
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:223
 msgid "The QR image dimensions are invalid or too large."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:482
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:744
 msgid "The QR image must not exceed 8 MiB."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:576
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:844
 msgid "The SM-DP+ address is invalid."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:881
+msgid "The SM-DS address is invalid."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:90
@@ -645,7 +918,7 @@ msgid ""
 "The active uqmi backend currently requires a /dev/cdc-wdmN control device."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:260
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:240
 msgid "The browser cannot prepare the QR image."
 msgstr ""
 
@@ -653,63 +926,80 @@ msgstr ""
 msgid "The custom ISD-R AID must contain exactly 32 hexadecimal characters."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:790
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:153
+msgid "The default SM-DP+ address cannot be empty."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:212
+msgid "The default SM-DP+ address was not confirmed as changed."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:240
+msgid "The default SM-DP+ address was updated and verified by eUICC readback."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:624
+msgid ""
+"The discovered order expired or was already used. Run SM-DS discovery again."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1276
 msgid ""
 "The eSIM profile was downloaded successfully. Open Profiles to verify and "
 "manage it."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:170
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:658
 msgid "The eUICC profile policy rejected this operation."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:172
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:660
 msgid "The eUICC rejected re-enabling this profile."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:776
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1262
 msgid ""
 "The existing profile download ended. This form was not submitted; review "
 "Profiles and Notifications before continuing."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:158
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:640
 msgid "The lpac RPC request failed or timed out."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:183
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:671
 msgid "The lpac RPC request failed."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:156
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:638
 msgid "The lpac configuration could not be saved."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:142
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:620
 msgid "The lpac configuration is invalid."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:146
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:626
 msgid "The lpac executable is not installed."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:185
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:673
 msgid "The lpac operation failed."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:154
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:636
 msgid "The lpac operation lock could not be created."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:148
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:630
 msgid "The lpac operation timed out."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:150
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:632
 msgid "The lpac output exceeded the RPC response limit."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:152
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:634
 msgid "The lpac process could not be executed."
 msgstr ""
 
@@ -717,65 +1007,125 @@ msgstr ""
 msgid "The lpac settings were saved."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:579
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:847
 msgid "The matching ID is invalid."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:654
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:112
+msgid "The notification was processed successfully."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:612
 msgid ""
-"The operation can take several minutes. Keep the router online and do not "
-"start another eUICC operation until it finishes."
+"The preview response could not be confirmed. It will not be sent again "
+"automatically. Status polling will determine whether lpac continued or "
+"cancelled."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:98
-msgid "The packaged lpac cannot explicitly remove sequence 0 safely"
-msgstr ""
-
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:988
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:422
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1525
 msgid ""
 "The previous download outcome is unknown. Open Profiles and Notifications "
 "before returning here to retry."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:144
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:622
 msgid ""
 "The profile download job is no longer available. Refresh Profiles and "
 "Notifications before retrying."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:134
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:606
 msgid ""
 "The profile download outcome is unknown. Refresh Profiles and Notifications "
 "before retrying so that the same activation code is not submitted twice."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:166
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1282
+msgid "The profile download was cancelled before installation."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:654
 msgid "The profile is not in the disabled state required for enabling."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:168
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:656
 msgid "The profile is not in the enabled state required for disabling."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:247
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:431
+msgid ""
+"The profile is ready for review. Confirm or cancel it in the preview dialog."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:609
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:628
+msgid ""
+"The profile preview expired without a decision and was cancelled before "
+"installation."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:276
 msgid "The profile state does not allow this action"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:140
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:650
+msgid ""
+"The provider accepted the notification, but lpac could not remove its local "
+"eUICC record. Use Remove instead of processing it again."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:551
+msgid ""
+"The provider did not supply profile metadata. The profile identity and icon "
+"cannot be verified before installation."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:138
+msgid ""
+"The provider has processed this record; use Remove instead of processing it "
+"again."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:648
+msgid ""
+"The provider notification outcome is unknown. Do not send it again "
+"automatically; refresh the list and review it first."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:136
+msgid ""
+"The provider outcome may be unknown; do not process this record again "
+"automatically."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:618
 msgid "The request contains an invalid argument."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:226
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:206
 msgid "The selected file is not a readable image."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:220
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:200
 msgid "The selected image could not be read."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:359
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:727
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:445
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1196
 msgid "The start response was lost. Checking whether lpac is still running…"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:257
+msgid ""
+"The update or its readback could not be completed. Its outcome is not being "
+"claimed; refresh eUICC information before retrying."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:211
+msgid ""
+"The update outcome could not be confirmed. Refresh eUICC information before "
+"retrying."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:175
@@ -784,44 +1134,52 @@ msgid ""
 "to the next lpac operation and do not restart any modem or network interface."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:565
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:833
 msgid "This activation code requires a confirmation code."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:102
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:121
+msgid ""
+"This changes persistent state on the eUICC, not a LuCI setting. The address "
+"remains configured after a router reboot."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:131
 msgid "Try the ISD-P AID if this eUICC rejects an operation by ICCID."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:976
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:340
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1512
 msgid ""
 "Unable to confirm whether a profile download is already running. Retrying "
 "automatically…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:87
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:301
 msgid "Unable to read eUICC information"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:81
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:295
 msgid "Unable to read lpac drivers"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:84
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:298
 msgid "Unable to read lpac settings"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:78
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:292
 msgid "Unable to read lpac version"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:55
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:249
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:249
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:269
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:278
 msgid "Unavailable"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:22
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:18
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:24
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:20
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:26
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:23
 msgid "Unknown"
 msgstr ""
@@ -830,7 +1188,11 @@ msgstr ""
 msgid "Unknown profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:179
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:199
+msgid "Updating default SM-DP+ address"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:208
 msgid "Updating nickname"
 msgstr ""
 
@@ -842,7 +1204,7 @@ msgstr ""
 msgid "Use the /dev/cdc-wdmN control device associated with the eUICC."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:651
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1091
 msgid "Use the default address stored on the eUICC"
 msgstr ""
 
@@ -853,77 +1215,108 @@ msgid ""
 "multi-slot devices that require normal slot selection."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:617
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1057
 msgid "Wait for the selected QR image to finish decoding."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:51
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:49
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:213
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:200
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:78
 msgid "Waiting for lpac…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:62
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:276
 #: applications/luci-app-lpac/root/usr/share/luci/menu.d/luci-app-lpac.json:12
 msgid "eSIM Manager"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:287
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:319
 msgid "eSIM profiles"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:96
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:314
 msgid "eUICC information"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:112
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:306
 msgid "eUICC notifications"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:162
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:245
+msgid ""
+"lpac accepted the update, but eUICC readback did not match the requested "
+"address."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:224
+msgid ""
+"lpac accepted the update, but the eUICC readback failed. Do not assume the "
+"displayed address is current; refresh before retrying."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:612
+msgid ""
+"lpac could not complete the protected profile-preview exchange. The profile "
+"was not approved for installation."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:644
 msgid ""
 "lpac could not download the profile. Verify the activation details, network "
 "connection, and provider service."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:164
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:652
 msgid ""
 "lpac could not find that profile identifier. Try the other identifier if "
 "available."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:198
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:646
 msgid ""
-"lpac creates a provider notification after deletion. Secure network "
-"notification processing is not available in this initial version, so the "
-"notification will remain pending on the eUICC."
+"lpac could not retrieve this notification from the eUICC. Refresh the "
+"notification list before retrying."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:356
-msgid "lpac is downloading and installing the profile…"
-msgstr ""
-
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:124
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:227
 msgid ""
-"lpac may create a provider notification after this change. Secure network "
-"notification processing is not available in this version, so the "
-"notification may remain pending on the eUICC."
+"lpac creates a provider notification after deletion. Open Notifications "
+"afterwards and process that record before removing it locally."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:178
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:442
+msgid "lpac is authenticating and retrieving the profile preview…"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:439
+msgid "lpac is cancelling the profile download session…"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:436
+msgid "lpac is installing the approved profile…"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:153
+msgid ""
+"lpac may create a provider notification after this change. Open "
+"Notifications afterwards to send any pending record to its provider."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:666
 msgid "lpac rejected the operation (code %d)."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:179
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:667
 msgid "lpac rejected the operation."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:174
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:662
 msgid ""
 "lpac reported an internal profile error. Try the other identifier and "
 "refresh setting."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:181
+#: applications/luci-app-lpac/htdocs/luci-static/resources/lpac.js:669
 msgid "lpac returned an invalid or unexpected response."
 msgstr ""
 
@@ -932,8 +1325,14 @@ msgstr ""
 msgid "lpac settings"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:69
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:283
 msgid "lpac version"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1094
+msgid ""
+"lpac will pause before PrepareDownload. Installation begins only after you "
+"approve the provider metadata in the next dialog."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:201
