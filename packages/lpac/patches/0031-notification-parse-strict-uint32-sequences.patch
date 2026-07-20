@@ -11,11 +11,11 @@ applets. Keep sequence zero valid and fail explicitly instead of reporting
 success after ignoring an invalid argument.
 ---
  src/applet/notification/dump.c                  | 13 +++++--------
- src/applet/notification/notification_sequence.c | 30 ++++++++++++++++++++++++++++++
+ src/applet/notification/notification_sequence.c | 31 +++++++++++++++++++++++++++++++
  src/applet/notification/notification_sequence.h | 10 ++++++++++
  src/applet/notification/process.c               | 15 +++++----------
  src/applet/notification/remove.c                | 16 +++++-----------
- 5 files changed, 55 insertions(+), 29 deletions(-)
+ 5 files changed, 56 insertions(+), 29 deletions(-)
  create mode 100644 src/applet/notification/notification_sequence.c
  create mode 100644 src/applet/notification/notification_sequence.h
 
@@ -51,11 +51,12 @@ success after ignoring an invalid argument.
              }
 --- /dev/null
 +++ b/src/applet/notification/notification_sequence.c
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,31 @@
 +// SPDX-License-Identifier: AGPL-3.0-only
 +
 +#include "notification_sequence.h"
 +
++#include <stddef.h>
 +#include <stdint.h>
 +
 +bool notification_parse_sequence_number(const char *value, uint32_t *sequence_number) {
