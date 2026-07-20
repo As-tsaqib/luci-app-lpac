@@ -4,14 +4,18 @@
 'use strict';
 
 const assert = require('assert');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const appRoot = path.resolve(__dirname, '..');
 let modal = null;
 let documentRoot = null;
+let canvasFixture = null;
+let scriptAppendHandler = null;
 const notifications = [];
 const pollEntries = [];
+const appendedScripts = [];
 
 if (!String.prototype.format) {
 	Object.defineProperty(String.prototype, 'format', {
@@ -41,16 +45,55 @@ function element(tag, attrs, children) {
 		tag,
 		attrs: attrs || {},
 		children: children == null ? [] : (Array.isArray(children) ? children : [ children ]),
-		style: {},
+		style: { display: '' },
+		disabled: attrs?.disabled != null,
 		appendChild: function(child) {
 			this.children.push(child);
 		},
 		getAttribute: function(name) {
 			return this.attrs[name] ?? null;
 		},
+		setAttribute: function(name, value) {
+			this.attrs[name] = value;
+
+			if (name === 'class')
+				this.className = value;
+			else if (name === 'disabled')
+				this.disabled = true;
+			else
+				this[name] = value;
+		},
 		removeAttribute: function(name) {
 			delete this.attrs[name];
 			delete this[name];
+		},
+		focus: function() {
+			global.document.activeElement = this;
+			this.focusCount = (this.focusCount || 0) + 1;
+		},
+		click: function() {
+			this.clickCount = (this.clickCount || 0) + 1;
+
+			if (typeof this.attrs.click === 'function')
+				return this.attrs.click({ currentTarget: this, target: this });
+		}
+	};
+	node.classList = {
+		add: function(name) {
+			const values = new Set(String(node.className || '').split(/\s+/).filter(Boolean));
+
+			values.add(name);
+			node.className = Array.from(values).join(' ');
+			node.attrs.class = node.className;
+		},
+		remove: function(name) {
+			node.className = String(node.className || '').split(/\s+/).filter(function(value) {
+				return value && value !== name;
+			}).join(' ');
+			node.attrs.class = node.className;
+		},
+		contains: function(name) {
+			return String(node.className || '').split(/\s+/).includes(name);
 		}
 	};
 
@@ -134,6 +177,7 @@ global.cbi_update_table = function(table, rows, empty) {
 	table.empty = empty;
 };
 global.document = {
+	activeElement: null,
 	getElementById: function(id) {
 		return findAll(documentRoot, function(node) {
 			return node.attrs?.id === id;
@@ -147,8 +191,14 @@ global.document = {
 				getContext: function() {
 					return {
 						drawImage: function() {},
-						getImageData: function() {
-							return { data: new Uint8ClampedArray(4) };
+						getImageData: function(x, y, width, height) {
+							if (canvasFixture) {
+								assert.strictEqual(width, canvasFixture.width);
+								assert.strictEqual(height, canvasFixture.height);
+								return { data: canvasFixture.data };
+							}
+
+							return { data: new Uint8ClampedArray(width * height * 4) };
 						}
 					};
 				}
@@ -159,6 +209,11 @@ global.document = {
 	},
 	head: {
 		appendChild: function(script) {
+			appendedScripts.push(script);
+
+			if (scriptAppendHandler)
+				return scriptAppendHandler(script);
+
 			throw new Error(`unexpected external script load: ${script.src}`);
 		}
 	}
@@ -199,11 +254,65 @@ function loadView(relativePath) {
 	return Function('view', 'ui', 'poll', 'lpac', source)(view, ui, poll, lpac);
 }
 
+function loadLpacClient() {
+	const source = fs.readFileSync(path.join(appRoot,
+		'htdocs/luci-static/resources/lpac.js'), 'utf8');
+	const rpc = {
+		declare: function() {
+			return function() { return Promise.resolve({}); };
+		}
+	};
+	const baseclass = { extend: function(spec) { return spec; } };
+
+	return Function('rpc', 'baseclass', source)(rpc, baseclass);
+}
+
 function byText(root, tag, label) {
 	return findAll(root, function(node) {
 		return node.tag === tag && textContent(node) === label;
 	});
 }
+
+function qrPixels(rows, scale) {
+	const sourceWidth = rows[0].length;
+	const width = sourceWidth * scale;
+	const height = rows.length * scale;
+	const data = new Uint8ClampedArray(width * height * 4);
+
+	for (let y = 0; y < height; y++) {
+		for (let x = 0; x < width; x++) {
+			const dark = rows[Math.floor(y / scale)][Math.floor(x / scale)] === '1';
+			const offset = (y * width + x) * 4;
+			const channel = dark ? 0 : 255;
+
+			data[offset] = channel;
+			data[offset + 1] = channel;
+			data[offset + 2] = channel;
+			data[offset + 3] = 255;
+		}
+	}
+
+	return { data, width, height };
+}
+
+const actualLpacClient = loadLpacClient();
+const downloadFailureMessage = actualLpacClient.errorMessage({
+	success: false,
+	error: 'lpac_error',
+	reason: 'download_failed',
+	code: 255
+});
+assert.strictEqual(downloadFailureMessage,
+	'lpac could not download the profile. Verify the activation details, network connection, and provider service.');
+assert.ok(!downloadFailureMessage.includes('255'),
+	'a known download failure should not present the unhelpful shell exit status');
+assert.strictEqual(actualLpacClient.errorMessage({
+	success: false,
+	error: 'job_not_found',
+	reason: 'outcome_unknown',
+	code: 255
+}), 'The profile download outcome is unknown. Refresh Profiles and Notifications before retrying so that the same activation code is not submitted twice.',
+'an unknown outcome should direct the user to inspect state before reusing a one-time code');
 
 const profile = {
 	iccid: '8912345678901234567',
@@ -460,15 +569,78 @@ assert.doesNotMatch(profileCss, /^\s*\.table\s+\.td/m,
 	'the responsive override must not alter unrelated LuCI tables');
 
 async function testDownloadView() {
-	const decoderAsset = require(path.join(appRoot,
-		'htdocs/luci-static/resources/jsqr.min.js'));
+	const decoderPath = path.join(appRoot,
+		'htdocs/luci-static/resources/jsqr.min.js');
+	const decoderHash = crypto.createHash('sha256')
+		.update(fs.readFileSync(decoderPath))
+		.digest('hex');
+
+	assert.strictEqual(decoderHash,
+		'4d3aa05b4bd0b48d2ae5c399aa931c5a92257c0ef0c50595b49f90dd59a079e0',
+		'the audited vendored jsQR asset should retain its exact source hash');
+
+	const decoderAsset = require(decoderPath);
 	assert.strictEqual(typeof decoderAsset, 'function',
 		'the vendored jsQR asset should expose its decoder function');
+	const speedtestCode = 'LPA:1$rsp.truphone.com$QRF-SPEEDTEST';
+	const speedtestMatrix = `
+0000000000000000000000000000000000000
+0000000000000000000000000000000000000
+0000000000000000000000000000000000000
+0000000000000000000000000000000000000
+0000111111100011011001101011111110000
+0000100000101011110100001010000010000
+0000101110101001010110101010111010000
+0000101110101100101000011010111010000
+0000101110100111100110011010111010000
+0000100000100001100010101010000010000
+0000111111101010101010101011111110000
+0000000000001000011100011000000000000
+0000100000101000010110010110011100000
+0000101001000000001000010101100100000
+0000100111110100100111101000001100000
+0000111010001010100010110100100100000
+0000110010111000011111011010000110000
+0000000011000011110010111111100000000
+0000111011101010011101000100110000000
+0000101010011010111000110011101010000
+0000001000111011001111110001001100000
+0000111010001001100011110011110100000
+0000111011101101011111010101011010000
+0000101100001001001010001001010000000
+0000100100100011100100001111111010000
+0000000000001010110000001000101010000
+0000111111100100011111111010101000000
+0000100000100110110010011000110110000
+0000101110100101010111011111100010000
+0000101110100011100010001100000010000
+0000101110100100001110111110111100000
+0000100000100010010000100100111010000
+0000111111101111111100010010111000000
+0000000000000000000000000000000000000
+0000000000000000000000000000000000000
+0000000000000000000000000000000000000
+0000000000000000000000000000000000000`.trim().split('\n');
+	const realQR = qrPixels(speedtestMatrix, 4);
+	const realDecoded = decoderAsset(realQR.data, realQR.width, realQR.height, {
+		inversionAttempts: 'attemptBoth'
+	});
+	assert.strictEqual(realDecoded?.data, `${speedtestCode}\u2060`,
+		'the actual vendored decoder should preserve the trailing U+2060 in the QR payload');
+
+	const initialStatusCalls = [];
+	lpac.getDownloadStatus = function(jobId) {
+		initialStatusCalls.push(jobId);
+		return Promise.resolve({ success: true, data: { status: 'idle' } });
+	};
 
 	const initialPollCount = pollEntries.length;
 	const downloadView = loadView('download.js');
-	const downloadPage = downloadView.render();
+	const initialStatus = await downloadView.load();
+	const downloadPage = downloadView.render(initialStatus);
 	documentRoot = downloadPage;
+	assert.deepStrictEqual(initialStatusCalls, [ 0 ],
+		'the view should query the recoverable current-job status while loading');
 
 	assert.strictEqual(pollEntries.length, initialPollCount + 1,
 		'the Download view should register one status poll');
@@ -483,22 +655,47 @@ async function testDownloadView() {
 
 	[
 		'lpac-download-mode', 'lpac-activation-code', 'lpac-qr-file',
+		'lpac-qr-camera', 'lpac-qr-file-button', 'lpac-qr-camera-button',
 		'lpac-smdp', 'lpac-matching-id', 'lpac-confirmation-code',
-		'lpac-imei', 'lpac-download-button'
+		'lpac-imei', 'lpac-download-clear', 'lpac-download-button',
+		'lpac-download-progress', 'lpac-download-progress-text',
+		'lpac-download-verification'
 	].forEach(function(id) {
 		assert.ok(downloadById(id), `${id} should be rendered`);
 	});
 
 	const qrInput = downloadById('lpac-qr-file');
+	const qrCamera = downloadById('lpac-qr-camera');
 	assert.strictEqual(qrInput.attrs.accept, 'image/png,image/jpeg,image/webp',
 		'the QR picker should limit uploads to supported image types');
-	assert.strictEqual(qrInput.attrs.capture, 'environment',
-		'the QR picker should offer the rear camera on mobile browsers');
+	assert.ok(qrInput.attrs.capture == null,
+		'the gallery picker must not force mobile browsers into camera capture');
+	assert.strictEqual(qrCamera.attrs.capture, 'environment',
+		'the separate camera picker should request the rear camera');
+	assert.strictEqual(qrCamera.attrs.accept, qrInput.attrs.accept,
+		'the gallery and camera paths should accept the same supported image types');
+	assert.strictEqual(typeof qrInput.attrs.change, 'function');
+	assert.strictEqual(typeof qrCamera.attrs.change, 'function');
 	assert.ok(qrInput.attrs.disabled == null,
 		'the QR picker should remain usable with write permission');
-	assert.strictEqual(findAll(downloadPage, function(node) {
-		return node.attrs?.class === 'alert-message warning';
-	}).length, 0, 'profile download should not be hidden behind a TLS warning');
+	const qrFileButton = downloadById('lpac-qr-file-button');
+	const qrCameraButton = downloadById('lpac-qr-camera-button');
+	qrFileButton.attrs.click();
+	qrCameraButton.attrs.click();
+	assert.strictEqual(qrInput.clickCount, 1,
+		'the choose-image action should open only the gallery input');
+	assert.strictEqual(qrCamera.clickCount, 1,
+		'the take-photo action should open only the camera input');
+	const downloadWarnings = findAll(downloadPage, function(node) {
+		return node.attrs?.class === 'alert-message warning' &&
+			textContent(node).includes('does not currently verify');
+	});
+	assert.strictEqual(downloadWarnings.length, 1,
+		'the Download view should prominently disclose the inherited TLS limitation');
+	assert.ok(textContent(downloadWarnings[0]).includes('does not currently verify'),
+		'the warning should explain peer and hostname verification without hiding the feature');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, false,
+		'the TLS disclosure must not disable an explicitly requested profile download');
 
 	const mode = downloadById('lpac-download-mode');
 	const activationFields = downloadById('lpac-download-activation-fields');
@@ -527,7 +724,7 @@ async function testDownloadView() {
 		'manual mode should allow the optional matching ID to be empty');
 	matchingInput.value = 'INVALID/MATCHING-ID';
 	assert.throws(function() { downloadView.collectRequest(); },
-		/The SM-DP\+ address or matching ID is invalid/,
+		/The matching ID is invalid/,
 		'a nonempty manual matching ID should retain strict validation');
 	matchingInput.value = 'MATCHING-ID';
 	smdpInput.value = '[2001:db8::1]:65535';
@@ -537,7 +734,7 @@ async function testDownloadView() {
 		'smdp.example.com/path' ].forEach(function(value) {
 		smdpInput.value = value;
 		assert.throws(function() { downloadView.collectRequest(); },
-			/The SM-DP\+ address or matching ID is invalid/,
+			/The SM-DP\+ address is invalid/,
 			`${value} should be rejected before invoking the RPC`);
 	});
 	smdpInput.value = 'smdp.example.com:443';
@@ -548,13 +745,49 @@ async function testDownloadView() {
 		'activation mode should restore activation-code controls');
 	assert.strictEqual(manualFields.style.display, 'none',
 		'activation mode should hide manual controls');
-	downloadById('lpac-activation-code').value = 'LPA:1$smdp.example.com$';
+	const activationInput = downloadById('lpac-activation-code');
+	activationInput.value = 'LPA:1$smdp.example.com$';
 	assert.strictEqual(downloadView.collectRequest().activationCode,
 		'LPA:1$smdp.example.com$',
 		'an upstream activation code may omit its matching ID');
+	activationInput.value = `${speedtestCode}\u2060`;
+	assert.strictEqual(downloadView.collectRequest().activationCode, speedtestCode,
+		'a harmless trailing U+2060 copied with the Speedtest code should be removed');
+	assert.strictEqual(activationInput.value, speedtestCode,
+		'the normalized activation code should replace the pasted DOM value');
+	activationInput.value = 'LPA:1$smdp.example.com$MATCH$OID$';
+	assert.strictEqual(downloadView.collectRequest().activationCode,
+		'LPA:1$smdp.example.com$MATCH$OID',
+		'an empty optional fifth field should be removed for lpac 2.3.0 compatibility');
+	assert.strictEqual(activationInput.value, 'LPA:1$smdp.example.com$MATCH$OID',
+		'the canonical four-field form should replace the ambiguous pasted value');
+	activationInput.value = 'LPA:1$rsp.truphone.com$QRF-\u2060SPEEDTEST';
+	assert.throws(function() { downloadView.collectRequest(); },
+		/Enter a valid LPA:1/,
+		'an invisible formatting character inside the matching ID must remain invalid');
+
+	activationInput.value = 'LPA:1$smdp.example.com$MATCHING-ID$$1';
+	downloadById('lpac-confirmation-code').value = '';
+	assert.throws(function() { downloadView.collectRequest(); },
+		/requires a confirmation code/,
+		'a confirmation-required activation code should identify its missing input');
+	const notificationCountBeforeConfirmation = notifications.length;
+	downloadView.showDownloadModal();
+	assert.strictEqual(notifications.length, notificationCountBeforeConfirmation + 1,
+		'the missing confirmation code should produce one validation notification');
+	assert.strictEqual(downloadById('lpac-confirmation-code').attrs['aria-invalid'], 'true',
+		'the missing confirmation code should mark the responsible field invalid');
+	assert.strictEqual(document.activeElement, downloadById('lpac-confirmation-code'),
+		'the missing confirmation code should focus the responsible field');
+	downloadById('lpac-confirmation-code').value = '1234';
+	assert.strictEqual(downloadView.collectRequest().confirmationCode, '1234',
+		'a confirmation-required activation code should pass once its code is supplied');
+	downloadById('lpac-confirmation-code').value = '';
 
 	let decoderCalls = 0;
 	let qrPayload = 'lpa:1$qr.example.com$';
+	let imageWidth = 320;
+	let imageHeight = 240;
 	const localDecoder = function(data, width, height, options) {
 		decoderCalls++;
 		assert.ok(data instanceof Uint8ClampedArray,
@@ -564,15 +797,14 @@ async function testDownloadView() {
 		assert.strictEqual(options.inversionAttempts, 'attemptBoth');
 		return { data: qrPayload };
 	};
-	window.jsQR = localDecoder;
 	window.FileReader = function() {};
 	window.FileReader.prototype.readAsDataURL = function() {
 		this.result = 'data:image/png;base64,AA==';
 		this.onload();
 	};
 	window.Image = function() {
-		this.naturalWidth = 320;
-		this.naturalHeight = 240;
+		this.naturalWidth = imageWidth;
+		this.naturalHeight = imageHeight;
 	};
 	Object.defineProperty(window.Image.prototype, 'src', {
 		get: function() { return this.imageSource; },
@@ -581,6 +813,42 @@ async function testDownloadView() {
 			this.onload();
 		}
 	});
+	delete window.jsQR;
+	const scriptCountBeforeQRLoad = appendedScripts.length;
+	scriptAppendHandler = function(script) {
+		window.jsQR = function() { return null; };
+		script.onload();
+	};
+	qrInput.files = [ { type: 'image/png', size: 1024 } ];
+	await downloadView.handleQRFile(qrInput);
+	scriptAppendHandler = null;
+	assert.strictEqual(appendedScripts.length, scriptCountBeforeQRLoad + 1,
+		'the first QR image should lazily append exactly one decoder script');
+	const decoderScript = appendedScripts.at(-1);
+	assert.strictEqual(decoderScript.src, '/luci-static/resources/jsqr.min.js',
+		'the browser loader should use the packaged LuCI resource path');
+	assert.strictEqual(decoderScript.async, true,
+		'the local decoder script should not block the LuCI page parser');
+	assert.strictEqual(textContent(downloadById('lpac-qr-status')),
+		'No valid eSIM activation code was found in the image.',
+		'the simulated browser-global decoder should complete the lazy-load path');
+	downloadView.clearForm();
+
+	window.jsQR = decoderAsset;
+	canvasFixture = realQR;
+	imageWidth = realQR.width;
+	imageHeight = realQR.height;
+	qrCamera.files = [ { type: 'image/png', size: 1024 } ];
+	await qrCamera.attrs.change({ currentTarget: qrCamera });
+	assert.strictEqual(activationInput.value, speedtestCode,
+		'the camera path should decode the real Speedtest QR matrix with vendored jsQR');
+	assert.strictEqual(textContent(downloadById('lpac-qr-status')),
+		'QR code decoded. The activation-code field has been filled.');
+	downloadView.clearForm();
+	canvasFixture = null;
+	imageWidth = 320;
+	imageHeight = 240;
+	window.jsQR = localDecoder;
 
 	qrInput.files = [ { type: 'application/pdf', size: 1024 } ];
 	await downloadView.handleQRFile(qrInput);
@@ -588,6 +856,24 @@ async function testDownloadView() {
 		'an explicitly unsupported MIME type should not reach the image decoder');
 	assert.strictEqual(textContent(downloadById('lpac-qr-status')),
 		'Select a PNG, JPEG, or WebP image.');
+
+	qrInput.files = [ { type: 'image/png', size: 8 * 1024 * 1024 + 1 } ];
+	await downloadView.handleQRFile(qrInput);
+	assert.strictEqual(decoderCalls, 0,
+		'an oversized QR file should be rejected before image decoding');
+	assert.strictEqual(textContent(downloadById('lpac-qr-status')),
+		'The QR image must not exceed 8 MiB.');
+
+	imageWidth = 7000;
+	imageHeight = 6000;
+	qrInput.files = [ { type: 'image/jpeg', size: 1024 } ];
+	await downloadView.handleQRFile(qrInput);
+	assert.strictEqual(decoderCalls, 0,
+		'an image above the pixel cap should not reach the QR decoder');
+	assert.strictEqual(textContent(downloadById('lpac-qr-status')),
+		'The QR image dimensions are invalid or too large.');
+	imageWidth = 320;
+	imageHeight = 240;
 
 	qrInput.files = [ { type: '', size: 1024 } ];
 	await downloadView.handleQRFile(qrInput);
@@ -614,6 +900,49 @@ async function testDownloadView() {
 	assert.strictEqual(downloadById('lpac-qr-preview').style.display, 'none');
 	assert.strictEqual(textContent(downloadById('lpac-qr-status')),
 		'No valid eSIM activation code was found in the image.');
+	assert.strictEqual(downloadById('lpac-qr-status').attrs.role, 'alert',
+		'a QR decoding error should be announced as an alert');
+
+	let finishDelayedRead = null;
+	let staleDecoderCalls = 0;
+	window.FileReader.prototype.readAsDataURL = function() {
+		const reader = this;
+
+		finishDelayedRead = function() {
+			reader.result = 'data:image/png;base64,DELAYED';
+			reader.onload();
+		};
+	};
+	window.jsQR = function() {
+		staleDecoderCalls++;
+		return { data: 'LPA:1$stale.example.com$STALE' };
+	};
+	activationInput.value = speedtestCode;
+	qrCamera.files = [ { type: 'image/jpeg', size: 2048 } ];
+	const delayedDecode = downloadView.handleQRFile(qrCamera);
+	assert.strictEqual(downloadView.qrDecoding, true,
+		'the view should expose an in-progress QR decode state');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, true,
+		'profile download must be disabled while a QR image is still decoding');
+	assert.strictEqual(typeof activationInput.attrs.input, 'function',
+		'the activation field should listen for edits that supersede a pending QR');
+	activationInput.value = 'LPA:1$manual.example.com$MANUAL';
+	activationInput.attrs.input({ currentTarget: activationInput });
+	assert.strictEqual(downloadView.qrDecoding, false,
+		'a manual activation-code edit should cancel the pending QR result');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, false,
+		'the Download action should be restored after the manual edit wins the race');
+	finishDelayedRead();
+	await delayedDecode;
+	assert.strictEqual(staleDecoderCalls, 0,
+		'a superseded image should not consume CPU in the QR decoder');
+	assert.strictEqual(activationInput.value, 'LPA:1$manual.example.com$MANUAL',
+		'a stale delayed QR result must not overwrite a newer manual activation code');
+
+	window.FileReader.prototype.readAsDataURL = function() {
+		this.result = 'data:image/png;base64,AA==';
+		this.onload();
+	};
 
 	qrPayload = 'lpa:1$qr.example.com$QR-MATCHING-ID$$1';
 	window.jsQR = localDecoder;
@@ -653,7 +982,7 @@ async function testDownloadView() {
 	downloadView.showDownloadModal();
 	assert.strictEqual(modal, startingModal,
 		'a repeated click while starting must not replace the progress modal');
-	resolveDownloadStart({ success: true, data: { job_id: 17 } });
+	resolveDownloadStart({ success: true, data: { job_id: 17, status: 'running' } });
 	await starting;
 	assert.deepStrictEqual(downloadArguments, [
 		'activation', 'LPA:1$qr.example.com$QR-MATCHING-ID$$1', '', '',
@@ -661,15 +990,23 @@ async function testDownloadView() {
 	], 'the browser should pass the complete activation code and optional flags');
 	assert.strictEqual(downloadView.activeJob, 17,
 		'the returned asynchronous job identifier should be retained');
-	assert.strictEqual(modal.title, 'Downloading eSIM profile',
-		'the UI should remain in a progress state while lpac runs');
-	const activeModal = modal;
+	assert.strictEqual(downloadView.activeJobOrigin, 'owned',
+		'a job identifier returned by this start request should be owned by the form');
+	assert.strictEqual(modal, null,
+		'the short start modal should close after the background job is attached');
+	assert.strictEqual(downloadById('lpac-download-progress').style.display, '',
+		'the UI should retain inline progress while lpac runs');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, true,
+		'the active job should disable duplicate download attempts');
 	downloadView.showDownloadModal();
-	assert.strictEqual(modal, activeModal,
-		'a repeated click for an active job must not replace the progress modal');
+	assert.strictEqual(modal, null,
+		'a repeated click for an active job must not open a second confirmation modal');
 
 	const statuses = [
 		{ success: false, error: 'transport_error' },
+		{ success: false, error: 'transport_error' },
+		{},
+		{ success: true, data: { status: 'idle' } },
 		{ success: true, data: { status: 'running' } },
 		{ success: true, data: { status: 'success' } }
 	];
@@ -693,11 +1030,23 @@ async function testDownloadView() {
 		'a transport error should not abandon the running backend task');
 	await downloadView.pollDownload();
 	assert.strictEqual(downloadView.activeJob, 17,
-		'a running download should remain active');
+		'repeated transport errors should still retain the supervised backend task');
+	assert.strictEqual(textContent(downloadById('lpac-download-progress-text')),
+		'Connection to the lpac service was lost. The download may still be running; status checks will continue automatically.',
+		'three consecutive status failures should make the uncertain connection visible');
+	await downloadView.pollDownload();
+	assert.strictEqual(downloadView.activeJob, 17,
+		'a malformed status must not be treated as terminal');
+	await downloadView.pollDownload();
+	assert.strictEqual(downloadView.activeJob, 17,
+		'an idle status is invalid for a specific running job and must not enable retry');
+	await downloadView.pollDownload();
+	assert.strictEqual(downloadView.activeJob, 17,
+		'a canonical running status should retain the download and recover polling');
 	await downloadView.pollDownload();
 	assert.strictEqual(downloadView.activeJob, null,
 		'a completed download should leave the active state');
-	assert.deepStrictEqual(polledJobs, [ 17, 17, 17, 17 ],
+	assert.deepStrictEqual(polledJobs, [ 17, 17, 17, 17, 17, 17, 17 ],
 		'status polling should use only the opaque job identifier');
 	assert.strictEqual(downloadById('lpac-activation-code').value, '',
 		'the activation secret should be cleared after success');
@@ -707,14 +1056,369 @@ async function testDownloadView() {
 		'the optional IMEI should be cleared after success');
 	assert.strictEqual(downloadById('lpac-qr-preview').style.display, 'none',
 		'the local QR preview should be cleared after success');
+	assert.strictEqual(downloadById('lpac-download-progress').style.display, 'none',
+		'the persistent progress notice should hide after terminal success');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, false,
+		'the Download action should be restored after terminal success');
 	assert.strictEqual(notifications.at(-1).level, 'info',
 		'a successful profile download should produce an information notice');
 
+	activationInput.value = 'LPA:1$unsent.example.com$UNSENT';
+	lpac.downloadProfile = function() {
+		return Promise.resolve({ success: false, error: 'busy' });
+	};
+	lpac.getDownloadStatus = function(jobId) {
+		return Promise.resolve({
+			success: true,
+			data: { job_id: jobId === 0 ? 21 : jobId, status: 'running' }
+		});
+	};
+	await downloadView.startDownload({
+		mode: 'activation',
+		activationCode: 'LPA:1$second.example.com$SECOND',
+		smdp: '',
+		matchingId: '',
+		imei: '',
+		confirmationCode: ''
+	});
+	assert.strictEqual(downloadView.activeJob, 21,
+		'a busy response should monitor the existing download when it is discoverable');
+	assert.strictEqual(downloadView.activeJobOrigin, 'external',
+		'the existing download must not be attributed to the rejected form submission');
+	assert.strictEqual(activationInput.value, 'LPA:1$unsent.example.com$UNSENT',
+		'monitoring an existing download must preserve the unsent activation code');
+	assert.ok(textContent(downloadById('lpac-download-progress-text')).includes('Another'),
+		'the progress text should identify an existing download rather than this form');
+	lpac.getDownloadStatus = function(jobId) {
+		return Promise.resolve({ success: true, data: { job_id: jobId, status: 'success' } });
+	};
+	await downloadView.pollDownload();
+	assert.strictEqual(activationInput.value, 'LPA:1$unsent.example.com$UNSENT',
+		'the existing job completion must not clear credentials that were never submitted');
+	assert.ok(textContent(notifications.at(-1).content).includes('form was not submitted'),
+		'the terminal notice should distinguish the monitored job from the unsent form');
+	assert.strictEqual(downloadView.retryBlocked, false,
+		'an explicitly rejected busy request must remain safe to retry after the external job');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, false,
+		'the form should be restored after the external job reaches a terminal state');
+
+	lpac.downloadProfile = function() {
+		return Promise.resolve({ success: false, error: 'busy' });
+	};
+	lpac.getDownloadStatus = function() {
+		return Promise.resolve({ success: true, data: { status: 'idle' } });
+	};
+	await downloadView.startDownload({
+		mode: 'activation',
+		activationCode: 'LPA:1$second.example.com$SECOND',
+		smdp: '',
+		matchingId: '',
+		imei: '',
+		confirmationCode: ''
+	});
+	assert.strictEqual(downloadView.retryBlocked, false,
+		'a rejected busy request followed by idle did not submit this form and may be retried');
+	assert.strictEqual(downloadView.activeJob, null,
+		'busy followed by idle must not invent a download job for the rejected request');
+	assert.strictEqual(downloadView.activeJobOrigin, null,
+		'busy followed by idle must leave no ownership state behind');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, false,
+		'busy followed by idle should restore the form instead of claiming an unknown outcome');
+	assert.strictEqual(activationInput.value, 'LPA:1$unsent.example.com$UNSENT',
+		'busy followed by idle should retain the unsent activation code');
+	assert.strictEqual(textContent(notifications.at(-1).content), 'busy',
+		'busy followed by idle should report the definitive busy result');
+
+	const lostStartStatusCalls = [];
+	const notificationsBeforeLostStart = notifications.length;
+	activationInput.value = speedtestCode;
+	lpac.downloadProfile = function() {
+		return Promise.resolve({ success: false, error: 'transport_error' });
+	};
+	lpac.getDownloadStatus = function(jobId) {
+		lostStartStatusCalls.push(jobId);
+
+		return Promise.resolve(jobId === 0
+			? { success: true, data: { job_id: 29, status: 'running' } }
+			: { success: false, error: 'job_not_found' });
+	};
+	await downloadView.startDownload({
+		mode: 'activation',
+		activationCode: speedtestCode,
+		smdp: '',
+		matchingId: '',
+		imei: '',
+		confirmationCode: ''
+	});
+	assert.deepStrictEqual(lostStartStatusCalls, [ 0 ],
+		'an ambiguous lost start response should query the recoverable current job');
+	assert.strictEqual(downloadView.activeJob, 29,
+		'the view should attach to a job that started despite the lost RPC response');
+	assert.strictEqual(downloadView.activeJobOrigin, 'uncertain',
+		'a job discovered after a lost start response must not be claimed by this form');
+	assert.strictEqual(notifications.length, notificationsBeforeLostStart,
+		'a successfully recovered lost start response must not report a false error');
+	assert.strictEqual(downloadById('lpac-download-progress').style.display, '',
+		'the recovered running job should remain visibly in progress');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, true,
+		'the recovered running job should prevent a duplicate profile download');
+	assert.ok(textContent(downloadById('lpac-download-progress-text'))
+		.includes('start response was lost'),
+		'the progress state should disclose that the recovered job ownership is uncertain');
+
+	lpac.getDownloadStatus = function(jobId) {
+		return Promise.resolve({ success: true, data: { job_id: jobId, status: 'success' } });
+	};
+	await downloadView.pollDownload();
+	assert.strictEqual(downloadView.activeJob, null,
+		'the uncertain recovered job should still reach a terminal state');
+	assert.strictEqual(activationInput.value, speedtestCode,
+		'an uncertain terminal success must preserve the activation code for verification');
+	assert.strictEqual(downloadView.retryBlocked, true,
+		'an uncertain terminal success must require verification before another submission');
+	assert.strictEqual(downloadById('lpac-download-verification').style.display, '',
+		'the uncertain terminal success should leave persistent verification guidance');
+	assert.strictEqual(notifications.at(-1).level, 'warning',
+		'an uncertain job must not be announced as this form\'s successful download');
+
+	/* Reset only the test fixture to exercise a separate owned-job rediscovery path. */
+	downloadView.retryBlocked = false;
+	downloadView.setVerificationRequired(false);
+	downloadView.updateControls();
+	lpac.downloadProfile = function() {
+		return Promise.resolve({ success: true, data: { job_id: 29, status: 'running' } });
+	};
+	await downloadView.startDownload({
+		mode: 'activation',
+		activationCode: speedtestCode,
+		smdp: '',
+		matchingId: '',
+		imei: '',
+		confirmationCode: ''
+	});
+	assert.strictEqual(downloadView.activeJobOrigin, 'owned',
+		'a direct start result should establish ownership before rediscovery is needed');
+
+	const rediscoveryCalls = [];
+	let rediscoveryCurrentChecks = 0;
+	lpac.getDownloadStatus = function(jobId) {
+		rediscoveryCalls.push(jobId);
+
+		if (jobId === 29)
+			return Promise.resolve({ success: false, error: 'job_not_found' });
+
+		rediscoveryCurrentChecks++;
+		return Promise.resolve(rediscoveryCurrentChecks === 1
+			? {}
+			: { success: true, data: { job_id: 31, status: 'running' } });
+	};
+	await downloadView.pollDownload();
+	assert.deepStrictEqual(rediscoveryCalls, [ 29, 0 ],
+		'a malformed current-job response should be retried after the remembered job disappears');
+	assert.strictEqual(downloadView.activeJob, 29,
+		'a malformed rediscovery response must not abandon the remembered owned job');
+	assert.strictEqual(downloadView.activeJobOrigin, 'owned',
+		'a malformed rediscovery response must not change job ownership');
+	await downloadView.pollDownload();
+	assert.deepStrictEqual(rediscoveryCalls, [ 29, 0, 29, 0 ],
+		'a missing remembered job should rediscover the backend current job');
+	assert.strictEqual(downloadView.activeJob, 31,
+		'current-job rediscovery should reattach even when the opaque ID changed');
+	assert.strictEqual(downloadView.activeJobOrigin, 'external',
+		'a different rediscovered job identifier must not retain ownership attribution');
+	assert.strictEqual(downloadView.retryBlocked, true,
+		'losing an owned job must preserve verification blocking while an external job runs');
+
+	lpac.getDownloadStatus = function(jobId) {
+		return Promise.resolve({ success: true, data: { job_id: jobId, status: 'success' } });
+	};
+	await downloadView.pollDownload();
+	assert.strictEqual(downloadView.activeJob, null,
+		'the recovered job should still reach its normal terminal success path');
+	assert.strictEqual(activationInput.value, speedtestCode,
+		'a different rediscovered job must not clear the original form credentials');
+	assert.strictEqual(downloadView.retryBlocked, true,
+		'the missing owned job outcome must remain blocked after the external job ends');
+
+	/* Reset only the test fixture before probing a separate unobservable fast completion. */
+	downloadView.retryBlocked = false;
+	downloadView.setVerificationRequired(false);
+	downloadView.updateControls();
+
+	let ambiguousStatusPolls = 0;
+	lpac.downloadProfile = function() {
+		return Promise.resolve({ success: false, error: 'transport_error' });
+	};
+	lpac.getDownloadStatus = function() {
+		ambiguousStatusPolls++;
+
+		return Promise.resolve(ambiguousStatusPolls < 3
+			? { success: false, error: 'transport_error' }
+			: { success: true, data: { status: 'idle' } });
+	};
+	await downloadView.startDownload({
+		mode: 'activation',
+		activationCode: speedtestCode,
+		smdp: '',
+		matchingId: '',
+		imei: '',
+		confirmationCode: ''
+	});
+	assert.strictEqual(downloadView.downloadStarting, true,
+		'a doubly lost start/status response should keep duplicate starts disabled');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, true,
+		'an ambiguous start must remain blocked while current-job checks are retried');
+	await downloadView.pollDownload();
+	assert.strictEqual(downloadView.downloadStarting, true,
+		'a repeated status transport error should retain the uncertain start state');
+	await downloadView.pollDownload();
+	assert.strictEqual(downloadView.downloadStarting, false,
+		'an eventual idle response should terminate the uncertain start probe');
+	assert.strictEqual(downloadView.retryBlocked, true,
+		'an unobservable fast completion must require profile verification before retry');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, true,
+		'the same page must not resubmit an activation code with an unknown outcome');
+	assert.strictEqual(downloadById('lpac-download-verification').style.display, '',
+		'an unknown outcome should leave persistent verification guidance on the page');
+	assert.ok(textContent(downloadById('lpac-download-verification'))
+		.includes('Open Profiles and Notifications'),
+		'the persistent guidance should explain how to verify before retrying');
+	let blockedDirectStarts = 0;
+	lpac.downloadProfile = function() {
+		blockedDirectStarts++;
+		return Promise.resolve({ success: true, data: { job_id: 99, status: 'running' } });
+	};
+	await downloadView.startDownload({
+		mode: 'activation',
+		activationCode: speedtestCode,
+		smdp: '',
+		matchingId: '',
+		imei: '',
+		confirmationCode: ''
+	});
+	assert.strictEqual(blockedDirectStarts, 0,
+		'the start invariant should reject direct or stale handlers after an unknown outcome');
+	const blockedModal = modal;
+	const blockedModalNotifications = notifications.length;
+	downloadView.showDownloadModal();
+	assert.strictEqual(modal, blockedModal,
+		'a direct modal handler must not bypass the unknown-outcome block');
+	assert.strictEqual(notifications.length, blockedModalNotifications + 1,
+		'a blocked modal attempt should repeat the verification guidance');
+	downloadView.clearForm();
+	assert.strictEqual(downloadView.retryBlocked, true,
+		'clearing visible credentials must not clear the unknown-outcome invariant');
+	assert.strictEqual(downloadById('lpac-download-button').disabled, true,
+		'the Download action must remain blocked after Clear');
+
+	const recoveredStatusCalls = [];
+	lpac.getDownloadStatus = function(jobId) {
+		recoveredStatusCalls.push(jobId);
+		return Promise.resolve({ success: true, data: { job_id: 73, status: 'running' } });
+	};
+	const recoveredView = loadView('download.js');
+	const recoveredStatus = await recoveredView.load();
+	const recoveredPage = recoveredView.render(recoveredStatus);
+	documentRoot = recoveredPage;
+	assert.deepStrictEqual(recoveredStatusCalls, [ 0 ],
+		'a newly rendered view should discover a download that survived navigation');
+	assert.strictEqual(recoveredView.activeJob, 73,
+		'the newly rendered view should reattach to the current running job');
+	assert.strictEqual(recoveredView.activeJobOrigin, 'external',
+		'a download discovered during navigation must not be attributed to this form');
+	assert.strictEqual(document.getElementById('lpac-download-progress').style.display, '',
+		'the navigation-recovered job should display persistent progress');
+	assert.strictEqual(document.getElementById('lpac-download-button').disabled, true,
+		'the navigation-recovered job should keep download controls disabled');
+
+	let unverifiedView = null;
+	let unverifiedPage = null;
+	for (const initialUnverifiedStatus of [ null, {} ]) {
+		lpac.getDownloadStatus = function() {
+			return Promise.resolve(initialUnverifiedStatus);
+		};
+		unverifiedView = loadView('download.js');
+		const loadedUnverifiedStatus = await unverifiedView.load();
+		unverifiedPage = unverifiedView.render(loadedUnverifiedStatus);
+		documentRoot = unverifiedPage;
+		assert.strictEqual(unverifiedView.checkingCurrentJob, true,
+			'an absent or malformed initial status must remain unverified');
+		assert.strictEqual(document.getElementById('lpac-download-progress').style.display, '',
+			'an unverified initial status should display an automatic-retry notice');
+		[ 'lpac-download-mode', 'lpac-activation-code', 'lpac-qr-file-button',
+			'lpac-download-clear', 'lpac-download-button' ].forEach(function(id) {
+			assert.strictEqual(document.getElementById(id).disabled, true,
+				`${id} should stay disabled until the current-job state is verified`);
+		});
+	}
+
+	const initialRecoveryStatuses = [
+		{},
+		{ success: true, data: { status: 'idle' } }
+	];
+	lpac.getDownloadStatus = function() {
+		return Promise.resolve(initialRecoveryStatuses.shift());
+	};
+	await unverifiedView.pollDownload();
+	assert.strictEqual(unverifiedView.checkingCurrentJob, true,
+		'a malformed retry must not silently enable an unverified form');
+	assert.strictEqual(document.getElementById('lpac-download-button').disabled, true,
+		'the malformed retry should keep Download disabled');
+	await unverifiedView.pollDownload();
+	assert.strictEqual(unverifiedView.checkingCurrentJob, false,
+		'a canonical idle response should resolve the initial uncertainty');
+	assert.strictEqual(document.getElementById('lpac-download-progress').style.display, 'none',
+		'the initial-status notice should hide after a canonical idle response');
+	assert.strictEqual(document.getElementById('lpac-download-button').disabled, false,
+		'the form should become usable only after a canonical idle response');
+
+	lpac.getDownloadStatus = function() {
+		return Promise.resolve({ success: false, error: 'transport_error' });
+	};
+	const transientInitialView = loadView('download.js');
+	const transientInitialStatus = await transientInitialView.load();
+	const transientInitialPage = transientInitialView.render(transientInitialStatus);
+	documentRoot = transientInitialPage;
+	document.getElementById('lpac-activation-code').value =
+		'LPA:1$waiting.example.com$WAITING';
+	let transientInitialPolls = 0;
+	lpac.getDownloadStatus = function() {
+		transientInitialPolls++;
+		return Promise.resolve(transientInitialPolls === 1
+			? { success: false, error: 'transport_error' }
+			: { success: true, data: { job_id: 88, status: 'running' } });
+	};
+	await transientInitialView.pollDownload();
+	assert.strictEqual(transientInitialView.checkingCurrentJob, true,
+		'a repeated initial transport failure should keep the form disabled and retrying');
+	assert.strictEqual(document.getElementById('lpac-download-button').disabled, true,
+		'Download must stay disabled through repeated initial transport failures');
+	await transientInitialView.pollDownload();
+	assert.strictEqual(transientInitialView.activeJobOrigin, 'external',
+		'a job found while recovering initial status must be treated as external');
+	assert.ok(textContent(document.getElementById('lpac-download-progress-text'))
+		.includes('Another'),
+		'the recovered initial job should be described as another download');
+	lpac.getDownloadStatus = function(jobId) {
+		return Promise.resolve({ success: true, data: { job_id: jobId, status: 'success' } });
+	};
+	await transientInitialView.pollDownload();
+	assert.strictEqual(document.getElementById('lpac-activation-code').value,
+		'LPA:1$waiting.example.com$WAITING',
+		'an initial-status recovery must preserve form data when the external job ends');
+	assert.strictEqual(transientInitialView.retryBlocked, false,
+		'an external job discovered before submission must not block a later retry');
+
 	L.hasViewPermission = function() { return false; };
+	lpac.getDownloadStatus = function() {
+		return Promise.resolve({ success: false, error: 'job_not_found' });
+	};
 	const readonlyView = loadView('download.js');
-	const readonlyPage = readonlyView.render();
+	const readonlyStatus = await readonlyView.load();
+	const readonlyPage = readonlyView.render(readonlyStatus);
 	documentRoot = readonlyPage;
 	[ 'lpac-download-mode', 'lpac-activation-code', 'lpac-qr-file',
+		'lpac-qr-camera', 'lpac-qr-file-button', 'lpac-qr-camera-button',
 		'lpac-download-button' ].forEach(function(id) {
 		const control = findAll(readonlyPage, function(node) {
 			return node.attrs?.id === id;
@@ -727,7 +1431,7 @@ async function testDownloadView() {
 }
 
 testDownloadView().then(function() {
-	console.log('ok - frontend controls, download flow, QR decoding, menu, and safety states');
+	console.log('ok - frontend controls, download recovery, real QR decoding, menu, and safety states');
 }).catch(function(error) {
 	console.error(error);
 	process.exitCode = 1;

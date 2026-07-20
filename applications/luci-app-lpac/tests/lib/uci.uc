@@ -36,4 +36,4 @@ export function cursor() {
 			return true;
 		}
 	};
-}
+};

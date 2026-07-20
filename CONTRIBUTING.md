@@ -23,22 +23,51 @@ template is reproducible. The SDK workflow must build only `luci-app-lpac`.
 - Never accept a raw command, executable path, shell fragment, or environment
   variable from the browser.
 - Keep all process arguments as separate argv elements.
-- Keep any legacy compatibility shell program constant and pass request values
-  only through positional argv; never interpolate them into the program text.
+- Keep the asynchronous download launcher constant and pass request values only
+  through positional argv. Never interpolate them into the shell program text
+  or add a general-purpose command interface.
+- Keep long downloads under `uloop.process()` supervision in a dedicated
+  `setsid` process group. Do not reintroduce `uloop.task()`, `fs.dup2()` feature
+  branches, or a timeout that kills only the wrapper PID.
+- Preserve the inheritable shared-lock descriptor for every download descendant.
+  Timeout handling must signal the entire process group and wait for its process
+  callback before reporting terminal state.
 - Do not expose raw lpac stdout, stderr, APDU data, activation codes, or HTTP
   payloads through RPC.
 - Never write live activation codes, confirmation codes, matching IDs, or
   secret-bearing lpac download argv to application logs or test fixtures.
+- Keep download status recoverable without storing credentials. The current-job
+  query may return only an opaque identifier and sanitized state; document and
+  test that in-memory state does not survive an rpcd restart.
+- Keep QR file choice and camera capture as separate controls. The normal file
+  picker must not carry a capture hint; the camera control may use
+  `capture="environment"`, with both paths decoding locally through the same
+  bounded image pipeline.
+- Normalize only harmless whitespace and Unicode formatting marks surrounding
+  an activation code. Continue rejecting such marks inside its fields so that
+  normalization cannot silently alter a credential.
 - Do not add modem resets, network restarts, or hardware-specific patches to
   this application.
 - Network methods must mirror documented lpac arguments, inherit the configured
   HTTP transport without silently changing its verification policy, and state
-  that boundary accurately in user-facing documentation.
+  that boundary accurately in user-facing documentation. Local QR decoding does
+  not compensate for lpac v2.3.0 disabling TLS peer and hostname verification.
 - Preserve the license and source provenance of third-party frontend assets.
 - Preserve granular read/write rpcd ACLs.
 - Add tests for every backend validation or normalization change.
-- Use synthetic download parameters in automated tests; never consume a live
-  provider activation code or contact an SM-DP+ service from CI.
+- Test process startup failure, process-group timeout, descendant cleanup,
+  inherited-lock release, unknown-outcome mapping, page re-entry, an ambiguous
+  start response, external-job monitoring, and transient status failures. A
+  job discovered after a lost response must not be attributed to that form
+  without a backend nonce; preserve the form and require outcome verification.
+  Tests must also prove that no child output or request credential reaches RPC
+  results.
+- Exercise the actual QR decoder with bounded image fixtures and test both file
+  and camera inputs; a decoder stub alone is not regression coverage for the
+  image pipeline.
+- Use synthetic download parameters or an explicitly public, non-secret test
+  profile in automated tests. Never consume a private or single-use activation
+  code, and never contact an SM-DP+ service from CI.
 
 ## Translations
 

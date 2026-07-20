@@ -11,6 +11,15 @@ const isReadonlyView = !L.hasViewPermission() || null;
 const maxQRFileSize = 8 * 1024 * 1024;
 const maxQRImagePixels = 40000000;
 const qrDecodeSizes = [ 1600, 1200, 900, 700 ];
+const jobOriginOwned = 'owned';
+const jobOriginExternal = 'external';
+const jobOriginUncertain = 'uncertain';
+const activationEdgeMarks = [
+	'\u00ad', '\u034f', '\u061c', '\u180e', '\u200b', '\u200c', '\u200d',
+	'\u200e', '\u200f', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+	'\u2060', '\u2061', '\u2062', '\u2063', '\u2064', '\u2066', '\u2067',
+	'\u2068', '\u2069', '\ufeff'
+];
 let jsQRPromise = null;
 
 function formRow(label, input, description) {
@@ -26,8 +35,8 @@ function formRow(label, input, description) {
 	]);
 }
 
-function textInput(id, type, placeholder, maxlength) {
-	return E('input', {
+function textInput(id, type, placeholder, maxlength, disabled, inputHandler) {
+	const attributes = {
 		'id': id,
 		'class': 'cbi-input-text',
 		'type': type || 'text',
@@ -35,14 +44,59 @@ function textInput(id, type, placeholder, maxlength) {
 		'maxlength': maxlength,
 		'autocomplete': 'off',
 		'spellcheck': 'false',
-		'disabled': isReadonlyView
-	});
+		'disabled': disabled === undefined ? isReadonlyView : disabled
+	};
+
+	if (inputHandler)
+		attributes.input = inputHandler;
+
+	return E('input', attributes);
 }
 
 function normalizeActivationCode(value) {
 	value = String(value || '').trim();
 
-	return /^lpa:/i.test(value) ? `LPA:${value.slice(4)}` : value;
+	while (value.length) {
+		let changed = false;
+
+		for (let i = 0; i < activationEdgeMarks.length; i++) {
+			const mark = activationEdgeMarks[i];
+
+			if (value.startsWith(mark)) {
+				value = value.slice(mark.length).trim();
+				changed = true;
+				break;
+			}
+
+			if (value.endsWith(mark)) {
+				value = value.slice(0, -mark.length).trim();
+				changed = true;
+				break;
+			}
+		}
+
+		if (!changed)
+			break;
+	}
+
+	value = /^lpa:/i.test(value) ? `LPA:${value.slice(4)}` : value;
+
+	const hasScheme = value.startsWith('LPA:');
+	const fields = (hasScheme ? value.slice(4) : value).split('$');
+
+	/* Avoid lpac 2.3.0 treating an empty optional fifth field as required. */
+	if (fields.length === 5 && fields[4] === '')
+		fields.pop();
+
+	return (hasScheme ? 'LPA:' : '') + fields.join('$');
+}
+
+function hasActivationFormatMark(value) {
+	for (let i = 0; i < activationEdgeMarks.length; i++)
+		if (value.includes(activationEdgeMarks[i]))
+			return true;
+
+	return false;
 }
 
 function validSmdp(value) {
@@ -69,11 +123,12 @@ function validMatchingId(value) {
 	return value.length <= 255 && /^[A-Za-z0-9-]+$/.test(value);
 }
 
-function validActivationCode(value, confirmationCode, allowMissingConfirmation) {
+function activationCodeIssue(value, confirmationCode, allowMissingConfirmation) {
 	let code = normalizeActivationCode(value);
 
-	if (code.length < 5 || code.length > 4096 || /\s/.test(code))
-		return false;
+	if (code.length < 5 || code.length > 4096 || /\s/.test(code) ||
+	    hasActivationFormatMark(code))
+		return 'format';
 
 	if (code.startsWith('LPA:'))
 		code = code.slice(4);
@@ -84,13 +139,47 @@ function validActivationCode(value, confirmationCode, allowMissingConfirmation) 
 	    !fields[1] || !validSmdp(fields[1]) ||
 	    (fields[2] && !validMatchingId(fields[2])) ||
 	    (fields.length >= 4 && fields[3].length > 255))
-		return false;
+		return 'format';
 
 	if (fields.length === 5 && fields[4] && fields[4] !== '0' && fields[4] !== '1')
-		return false;
+		return 'format';
 
-	return allowMissingConfirmation || fields.length < 5 || fields[4] !== '1' ||
-		confirmationCode.length > 0;
+	if (!allowMissingConfirmation && fields.length === 5 && fields[4] === '1' &&
+	    confirmationCode.length === 0)
+		return 'confirmation_required';
+
+	return null;
+}
+
+function validActivationCode(value, confirmationCode, allowMissingConfirmation) {
+	return activationCodeIssue(value, confirmationCode, allowMissingConfirmation) === null;
+}
+
+function activationServer(value) {
+	const code = normalizeActivationCode(value);
+	const fields = (code.startsWith('LPA:') ? code.slice(4) : code).split('$');
+
+	return fields[1] || '';
+}
+
+function validationError(message, fieldId) {
+	const error = new Error(message);
+
+	error.fieldId = fieldId;
+	return error;
+}
+
+function isIdleDownloadStatus(result) {
+	return result?.success === true && result.data?.status === 'idle';
+}
+
+function isTerminalDownloadStatus(result) {
+	if (result?.success === true)
+		return result.data?.status === 'success';
+
+	return result?.success === false && [
+		'execution_failed', 'lpac_error', 'not_installed', 'timeout'
+	].includes(result.error);
 }
 
 function loadJsQR() {
@@ -188,9 +277,132 @@ function decodeImage(decoder, image) {
 
 return view.extend({
 	activeJob: null,
+	activeJobOrigin: null,
 	downloadStarting: false,
+	checkingCurrentJob: false,
 	qrActivationCode: null,
 	qrDecodeGeneration: 0,
+	qrDecoding: false,
+	pollRegistered: false,
+	statusFailures: 0,
+	pendingStartResult: null,
+	retryBlocked: false,
+
+	load: function() {
+		this.activeJob = null;
+		this.activeJobOrigin = null;
+		this.downloadStarting = false;
+		this.checkingCurrentJob = false;
+		this.pendingStartResult = null;
+		this.statusFailures = 0;
+		this.retryBlocked = false;
+		return L.resolveDefault(lpac.getDownloadStatus(0), null);
+	},
+
+	isBusy: function() {
+		return !!(this.activeJob || this.downloadStarting || this.checkingCurrentJob);
+	},
+
+	updateControls: function() {
+		const busy = this.isBusy();
+		const disabled = !!isReadonlyView || busy;
+
+		[
+			'lpac-download-mode', 'lpac-activation-code', 'lpac-qr-file',
+			'lpac-qr-camera', 'lpac-qr-file-button', 'lpac-qr-camera-button',
+			'lpac-smdp', 'lpac-matching-id', 'lpac-imei',
+			'lpac-confirmation-code', 'lpac-download-clear'
+		].forEach(function(id) {
+			const control = document.getElementById(id);
+
+			if (control)
+				control.disabled = disabled;
+		});
+
+		const download = document.getElementById('lpac-download-button');
+
+		if (download)
+			download.disabled = disabled || this.qrDecoding || this.retryBlocked;
+
+		[ 'lpac-qr-file', 'lpac-qr-camera',
+			'lpac-qr-file-button', 'lpac-qr-camera-button' ].forEach(function(id) {
+			const control = document.getElementById(id);
+
+			if (control)
+				control.disabled = disabled || this.qrDecoding;
+		}.bind(this));
+	},
+
+	setDownloadProgress: function(visible, message) {
+		const status = document.getElementById('lpac-download-progress');
+		const text = document.getElementById('lpac-download-progress-text');
+
+		if (status)
+			status.style.display = visible ? '' : 'none';
+
+		if (text)
+			text.textContent = message || '';
+	},
+
+	setVerificationRequired: function(visible) {
+		const warning = document.getElementById('lpac-download-verification');
+
+		if (warning)
+			warning.style.display = visible ? '' : 'none';
+	},
+
+	runningJobMessage: function() {
+		if (this.activeJobOrigin === jobOriginOwned)
+			return _('lpac is downloading and installing the profile…');
+
+		if (this.activeJobOrigin === jobOriginUncertain)
+			return _('The start response was lost. Checking whether lpac is still running…');
+
+		return _('Another profile download is running. Monitoring it before this form can be submitted.');
+	},
+
+	attachRunningJob: function(result, origin) {
+		const id = result?.data?.job_id;
+
+		if (!result?.success || result.data?.status !== 'running' ||
+		    !Number.isInteger(id) || id < 1)
+			return false;
+
+		this.activeJob = id;
+		this.activeJobOrigin = origin === jobOriginOwned || origin === jobOriginUncertain
+			? origin
+			: jobOriginExternal;
+		this.downloadStarting = false;
+		this.checkingCurrentJob = false;
+		this.statusFailures = 0;
+		this.pendingStartResult = null;
+		this.setDownloadProgress(true, this.runningJobMessage());
+		this.setVerificationRequired(this.retryBlocked);
+		this.updateControls();
+		return true;
+	},
+
+	openQRPicker: function(input) {
+		if (input && !this.isBusy() && !this.qrDecoding && !isReadonlyView)
+			input.click();
+	},
+
+	handleActivationInput: function() {
+		const decoding = this.qrDecoding;
+		const hadQRResult = this.qrActivationCode !== null;
+
+		if (!decoding && !hadQRResult)
+			return;
+
+		if (decoding) {
+			this.qrDecodeGeneration++;
+			this.qrDecoding = false;
+		}
+
+		this.clearQRResult();
+		this.setQRStatus('');
+		this.updateControls();
+	},
 
 	updateMode: function() {
 		const mode = document.getElementById('lpac-download-mode').value;
@@ -201,18 +413,36 @@ return view.extend({
 		manual.style.display = mode === 'manual' ? '' : 'none';
 	},
 
+	handleModeChange: function() {
+		if (this.qrDecoding)
+			this.handleActivationInput();
+
+		this.updateMode();
+	},
+
 	setQRStatus: function(message, state) {
 		const status = document.getElementById('lpac-qr-status');
 
+		if (!status)
+			return;
+
 		status.className = state === 'error'
-			? 'cbi-value-description error'
+			? 'alert-message error'
 			: 'cbi-value-description';
+		status.setAttribute('role', state === 'error' ? 'alert' : 'status');
 		status.textContent = message || '';
 	},
 
 	clearQRResult: function() {
 		const activation = document.getElementById('lpac-activation-code');
 		const preview = document.getElementById('lpac-qr-preview');
+
+		[ 'lpac-qr-file', 'lpac-qr-camera' ].forEach(function(id) {
+			const input = document.getElementById(id);
+
+			if (input)
+				input.value = '';
+		});
 
 		if (activation && this.qrActivationCode &&
 		    activation.value === this.qrActivationCode)
@@ -234,16 +464,23 @@ return view.extend({
 
 		const generation = ++this.qrDecodeGeneration;
 		this.clearQRResult();
+		this.qrDecoding = true;
+
+		this.updateControls();
 
 		if (file.type && ![ 'image/png', 'image/jpeg', 'image/webp' ].includes(file.type)) {
 			input.value = '';
+			this.qrDecoding = false;
 			this.setQRStatus(_('Select a PNG, JPEG, or WebP image.'), 'error');
+			this.updateControls();
 			return;
 		}
 
 		if (file.size > maxQRFileSize) {
 			input.value = '';
+			this.qrDecoding = false;
 			this.setQRStatus(_('The QR image must not exceed 8 MiB.'), 'error');
+			this.updateControls();
 			return;
 		}
 
@@ -261,24 +498,37 @@ return view.extend({
 			document.getElementById('lpac-activation-code').value = activationCode;
 			this.qrActivationCode = activationCode;
 			const preview = document.getElementById('lpac-qr-preview');
+
 			preview.src = values[1].dataUrl;
 			preview.style.display = 'block';
-			this.setQRStatus(_('QR code decoded. The activation-code field has been filled.'));
+			this.setQRStatus(
+				activationCodeIssue(activationCode, '', false) === 'confirmation_required'
+					? _('QR code decoded. Enter the confirmation code required by this profile.')
+					: _('QR code decoded. The activation-code field has been filled.'));
 		}.bind(this)).catch(function(error) {
-			if (generation === this.qrDecodeGeneration)
+			if (generation === this.qrDecodeGeneration) {
+				input.value = '';
 				this.setQRStatus(error.message, 'error');
+			}
+		}.bind(this)).finally(function() {
+			if (generation === this.qrDecodeGeneration) {
+				this.qrDecoding = false;
+				this.updateControls();
+			}
 		}.bind(this));
 	},
 
 	clearForm: function() {
-		if (this.activeJob || this.downloadStarting)
+		if (this.isBusy())
 			return;
 
 		this.qrDecodeGeneration++;
+		this.qrDecoding = false;
 
 		[
 			'lpac-activation-code', 'lpac-smdp', 'lpac-matching-id',
-			'lpac-imei', 'lpac-confirmation-code', 'lpac-qr-file'
+			'lpac-imei', 'lpac-confirmation-code', 'lpac-qr-file',
+			'lpac-qr-camera'
 		].forEach(function(id) {
 			const input = document.getElementById(id);
 
@@ -288,35 +538,57 @@ return view.extend({
 
 		this.clearQRResult();
 		this.setQRStatus('');
+		this.updateControls();
 	},
 
 	collectRequest: function() {
 		const mode = document.getElementById('lpac-download-mode').value;
-		const activationCode = normalizeActivationCode(
-			document.getElementById('lpac-activation-code').value);
+		const activationInput = document.getElementById('lpac-activation-code');
+		const activationCode = normalizeActivationCode(activationInput.value);
 		const smdp = document.getElementById('lpac-smdp').value.trim();
 		const matchingId = document.getElementById('lpac-matching-id').value.trim();
 		const imei = document.getElementById('lpac-imei').value.trim();
 		const confirmationCode = document.getElementById('lpac-confirmation-code').value.trim();
 
+		[
+			'lpac-activation-code', 'lpac-smdp', 'lpac-matching-id',
+			'lpac-confirmation-code', 'lpac-imei'
+		].forEach(function(id) {
+			document.getElementById(id).removeAttribute('aria-invalid');
+		});
+
 		if (mode === 'activation') {
-			if (!validActivationCode(activationCode, confirmationCode))
-				throw new Error(_('Enter a valid LPA:1$… activation code.'));
+			const issue = activationCodeIssue(activationCode, confirmationCode, false);
+
+			if (issue === 'confirmation_required')
+				throw validationError(
+					_('This activation code requires a confirmation code.'),
+					'lpac-confirmation-code');
+
+			if (issue)
+				throw validationError(_('Enter a valid LPA:1$… activation code.'),
+					'lpac-activation-code');
+
+			activationInput.value = activationCode;
 		}
 		else if (mode === 'manual') {
-			if ((smdp && !validSmdp(smdp)) ||
-			    (matchingId && !validMatchingId(matchingId)))
-				throw new Error(_('The SM-DP+ address or matching ID is invalid.'));
+			if (smdp && !validSmdp(smdp))
+				throw validationError(_('The SM-DP+ address is invalid.'), 'lpac-smdp');
+
+			if (matchingId && !validMatchingId(matchingId))
+				throw validationError(_('The matching ID is invalid.'), 'lpac-matching-id');
 		}
 		else {
 			throw new Error(_('Select a valid download method.'));
 		}
 
 		if (confirmationCode.length > 255 || /[\u0000-\u001F\u007F]/.test(confirmationCode))
-			throw new Error(_('Confirmation code is too long or contains control characters.'));
+			throw validationError(
+				_('Confirmation code is too long or contains control characters.'),
+				'lpac-confirmation-code');
 
 		if (imei && !/^[0-9]{14,16}$/.test(imei))
-			throw new Error(_('IMEI must contain 14 to 16 digits.'));
+			throw validationError(_('IMEI must contain 14 to 16 digits.'), 'lpac-imei');
 
 		return {
 			mode,
@@ -329,8 +601,23 @@ return view.extend({
 	},
 
 	showDownloadModal: function() {
-		if (this.activeJob || this.downloadStarting)
+		if (this.isBusy())
 			return;
+
+		if (this.retryBlocked) {
+			ui.addNotification(null, E('p', {}, [ lpac.errorMessage({
+				error: 'execution_failed',
+				reason: 'outcome_unknown'
+			}) ]), 'error');
+			return;
+		}
+
+		if (this.qrDecoding) {
+			ui.addNotification(null, E('p', {}, [
+				_('Wait for the selected QR image to finish decoding.')
+			]), 'warning');
+			return;
+		}
 
 		let request;
 
@@ -338,15 +625,30 @@ return view.extend({
 			request = this.collectRequest();
 		}
 		catch (error) {
+			const input = error.fieldId && document.getElementById(error.fieldId);
+
+			if (input) {
+				input.setAttribute('aria-invalid', 'true');
+				input.focus();
+			}
+
 			ui.addNotification(null, E('p', {}, [ error.message ]), 'error');
 			return;
 		}
+
+		const server = request.mode === 'activation'
+			? activationServer(request.activationCode)
+			: request.smdp;
 
 		ui.showModal(_('Download eSIM profile'), [
 			E('p', {}, [
 				request.mode === 'activation'
 					? _('Download and install the profile described by this activation code?')
 					: _('Start profile download using the supplied manual parameters?')
+			]),
+			E('p', {}, [
+				E('strong', {}, [ _('SM-DP+ server:'), ' ' ]),
+				server || _('Use the default address stored on the eUICC')
 			]),
 			E('p', { 'class': 'cbi-value-description', 'role': 'note' }, [
 				_('The operation can take several minutes. Keep the router online and do not start another eUICC operation until it finishes.')
@@ -366,16 +668,15 @@ return view.extend({
 	},
 
 	startDownload: function(request) {
-		if (this.activeJob || this.downloadStarting)
+		if (this.activeJob || this.downloadStarting || this.checkingCurrentJob ||
+		    this.qrDecoding || this.retryBlocked)
 			return;
 
 		this.downloadStarting = true;
-		ui.showModal(_('Downloading eSIM profile'), [
-			E('p', { 'class': 'spinning' }, [ _('Waiting for lpac…') ]),
-			E('p', { 'class': 'cbi-value-description' }, [
-				_('The page will update automatically when the download finishes.')
-			])
-		]);
+		this.pendingStartResult = null;
+		ui.hideModal();
+		this.setDownloadProgress(true, _('Starting the lpac download…'));
+		this.updateControls();
 
 		return lpac.downloadProfile(
 			request.mode,
@@ -385,77 +686,306 @@ return view.extend({
 			request.imei,
 			request.confirmationCode
 		).then(function(result) {
-			if (!result || !result.success || !Number.isInteger(result.data?.job_id) ||
-			    result.data.job_id < 1)
+			if (this.attachRunningJob(result, jobOriginOwned))
+				return;
+
+			if (result?.error === 'busy') {
+				return lpac.getDownloadStatus(0).then(function(current) {
+					if (!this.attachRunningJob(current, jobOriginExternal))
+						throw new Error(lpac.errorMessage(result));
+				}.bind(this), function() {
+					throw new Error(lpac.errorMessage(result));
+				});
+			}
+
+			const recoverable = !result || result.error === 'transport_error' ||
+				result.success === true;
+
+			if (!recoverable)
 				throw new Error(lpac.errorMessage(result));
 
-			this.activeJob = result.data.job_id;
-			this.downloadStarting = false;
+			this.pendingStartResult = result || {
+				success: false,
+				error: 'transport_error'
+			};
+
+			return lpac.getDownloadStatus(0).then(function(current) {
+				if (this.attachRunningJob(current, jobOriginUncertain))
+					return;
+
+				if (isIdleDownloadStatus(current)) {
+					this.finishDownload({
+						success: false,
+						error: 'execution_failed',
+						reason: 'outcome_unknown'
+					});
+					return;
+				}
+
+				this.recordStatusFailure();
+				this.setDownloadProgress(true,
+					_('The start response was lost. Checking whether lpac is still running…'));
+			}.bind(this));
 		}.bind(this)).catch(function(error) {
 			this.downloadStarting = false;
-			ui.hideModal();
+			this.activeJob = null;
+			this.activeJobOrigin = null;
+			this.checkingCurrentJob = false;
+			this.pendingStartResult = null;
+			this.setDownloadProgress(false);
+			this.updateControls();
 			ui.addNotification(null, E('p', {}, [ error.message ]), 'error');
 		}.bind(this));
 	},
 
+	recordStatusFailure: function() {
+		this.statusFailures++;
+
+		if (this.statusFailures >= 3)
+			this.setDownloadProgress(true,
+				_('Connection to the lpac service was lost. The download may still be running; status checks will continue automatically.'));
+	},
+
+	finishDownload: function(result) {
+		const origin = this.activeJobOrigin || (this.pendingStartResult !== null
+			? jobOriginUncertain
+			: jobOriginExternal);
+		const ownedOutcomeUnknown = origin === jobOriginOwned &&
+			(result?.reason === 'outcome_unknown' || result?.error === 'job_not_found');
+		const verificationRequired = this.retryBlocked ||
+			origin === jobOriginUncertain || ownedOutcomeUnknown;
+
+		this.activeJob = null;
+		this.activeJobOrigin = null;
+		this.downloadStarting = false;
+		this.checkingCurrentJob = false;
+		this.statusFailures = 0;
+		this.pendingStartResult = null;
+		this.retryBlocked = verificationRequired;
+		this.setDownloadProgress(false);
+		this.setVerificationRequired(this.retryBlocked);
+
+		if (origin === jobOriginExternal) {
+			this.updateControls();
+			ui.addNotification(null, E('p', {}, [ this.retryBlocked
+				? lpac.errorMessage({
+					success: false,
+					error: 'execution_failed',
+					reason: 'outcome_unknown'
+				})
+				: _('The existing profile download ended. This form was not submitted; review Profiles and Notifications before continuing.')
+			]), this.retryBlocked || !result?.success ? 'warning' : 'info');
+		}
+		else if (origin === jobOriginUncertain) {
+			this.updateControls();
+			ui.addNotification(null, E('p', {}, [ lpac.errorMessage({
+				success: false,
+				error: 'execution_failed',
+				reason: 'outcome_unknown'
+			}) ]), 'warning');
+		}
+		else if (result && result.success && result.data?.status === 'success') {
+			this.clearForm();
+			ui.addNotification(null, E('p', {}, [
+				_('The eSIM profile was downloaded successfully. Open Profiles to verify and manage it.')
+			]), 'info');
+		}
+		else {
+			this.updateControls();
+			ui.addNotification(null, E('p', {}, [
+				result?.success
+					? lpac.errorMessage({ error: 'invalid_response' })
+					: lpac.errorMessage(result)
+			]), 'error');
+		}
+	},
+
 	pollDownload: function() {
-		if (!this.activeJob)
+		if (this.checkingCurrentJob) {
+			return lpac.getDownloadStatus(0).then(function(current) {
+				if (this.attachRunningJob(current, jobOriginExternal))
+					return;
+
+				if (!isIdleDownloadStatus(current)) {
+					this.recordStatusFailure();
+					return;
+				}
+
+				this.checkingCurrentJob = false;
+				this.statusFailures = 0;
+				this.setDownloadProgress(false);
+				this.updateControls();
+			}.bind(this)).catch(function() {
+				this.recordStatusFailure();
+			}.bind(this));
+		}
+
+		if (!this.activeJob && (!this.downloadStarting || !this.pendingStartResult))
 			return Promise.resolve();
+
+		if (!this.activeJob) {
+			return lpac.getDownloadStatus(0).then(function(current) {
+				if (this.attachRunningJob(current, jobOriginUncertain))
+					return;
+
+				if (!isIdleDownloadStatus(current)) {
+					this.recordStatusFailure();
+					return;
+				}
+
+				this.finishDownload({
+					success: false,
+					error: 'execution_failed',
+					reason: 'outcome_unknown'
+				});
+			}.bind(this)).catch(function() {
+				this.recordStatusFailure();
+			}.bind(this));
+		}
 
 		const jobId = this.activeJob;
 
 		return lpac.getDownloadStatus(jobId).then(function(result) {
-			if (result && result.success && result.data?.status === 'running')
+			if (result && result.success && result.data?.status === 'running') {
+				this.statusFailures = 0;
+				this.setDownloadProgress(true, this.runningJobMessage());
 				return;
+			}
 
-			if (result?.error === 'transport_error')
+			if (result?.error === 'transport_error') {
+				this.recordStatusFailure();
 				return;
-
-			this.activeJob = null;
-			ui.hideModal();
-
-			if (result && result.success && result.data?.status === 'success') {
-				this.clearForm();
-				ui.addNotification(null, E('p', {}, [
-					_('The eSIM profile was downloaded successfully. Open Profiles to verify and manage it.')
-				]), 'info');
 			}
-			else {
-				ui.addNotification(null, E('p', {}, [ lpac.errorMessage(result) ]), 'error');
+
+			if (result?.error === 'job_not_found') {
+				const missingOrigin = this.activeJobOrigin;
+
+				return lpac.getDownloadStatus(0).then(function(current) {
+					if (this.attachRunningJob(current, jobOriginExternal)) {
+						if (missingOrigin !== jobOriginExternal) {
+							this.retryBlocked = true;
+							this.setVerificationRequired(true);
+							this.updateControls();
+						}
+
+						return;
+					}
+
+					if (!isIdleDownloadStatus(current)) {
+						this.recordStatusFailure();
+						return;
+					}
+
+					this.finishDownload(result);
+				}.bind(this));
 			}
+
+			if (!isTerminalDownloadStatus(result)) {
+				this.recordStatusFailure();
+				return;
+			}
+
+			this.finishDownload(result);
 		}.bind(this)).catch(function() {
-			/* Keep polling: the background lpac task may still be running. */
-		});
+			/* Keep polling: the supervised lpac process may still be running. */
+			this.recordStatusFailure();
+		}.bind(this));
 	},
 
-	render: function() {
-		poll.add(this.pollDownload.bind(this), 2);
+	render: function(initialStatus) {
+		if (!this.attachRunningJob(initialStatus, jobOriginExternal) &&
+		    !isIdleDownloadStatus(initialStatus)) {
+			this.checkingCurrentJob = true;
+			this.statusFailures = 1;
+		}
 
+		if (!this.pollRegistered) {
+			poll.add(this.pollDownload.bind(this), 2);
+			this.pollRegistered = true;
+		}
+
+		const controlsDisabled = isReadonlyView || this.isBusy() || null;
 		const mode = E('select', {
 			'id': 'lpac-download-mode',
 			'class': 'cbi-input-select',
-			'disabled': isReadonlyView,
-			'change': this.updateMode.bind(this)
+			'disabled': controlsDisabled,
+			'change': this.handleModeChange.bind(this)
 		}, [
-			E('option', { 'value': 'activation', 'selected': '' }, [ _('Activation code or QR') ]),
+			E('option', { 'value': 'activation', 'selected': '' }, [
+				_('Activation code or QR')
+			]),
 			E('option', { 'value': 'manual' }, [ _('Manual parameters') ])
 		]);
-		const qrFile = E('input', {
-			'id': 'lpac-qr-file',
-			'class': 'cbi-input-file',
-			'type': 'file',
-			'accept': 'image/png,image/jpeg,image/webp',
-			'capture': 'environment',
-			'disabled': isReadonlyView,
-			'change': function(event) {
-				return this.handleQRFile(event.currentTarget);
-			}.bind(this)
-		});
+		const makeQRInput = function(id, capture) {
+			return E('input', {
+				'id': id,
+				'type': 'file',
+				'accept': 'image/png,image/jpeg,image/webp',
+				'capture': capture || null,
+				'disabled': controlsDisabled,
+				'style': 'display:none',
+				'change': function(event) {
+					return this.handleQRFile(event.currentTarget);
+				}.bind(this)
+			});
+		}.bind(this);
+		const qrFile = makeQRInput('lpac-qr-file');
+		const qrCamera = makeQRInput('lpac-qr-camera', 'environment');
+		const activationInput = textInput('lpac-activation-code', 'password',
+			'LPA:1$smdp.example.com$MATCHING-ID', 4096, controlsDisabled,
+			this.handleActivationInput.bind(this));
+
+		activationInput.setAttribute('aria-describedby', 'lpac-qr-status');
+
+		const pickerButton = function(id, label, input) {
+			return E('button', {
+				'id': id,
+				'class': 'btn cbi-button cbi-button-neutral',
+				'type': 'button',
+				'disabled': controlsDisabled,
+				'click': function(event) {
+					if (event)
+						event.preventDefault();
+
+					this.openQRPicker(input);
+				}.bind(this)
+			}, [ label ]);
+		}.bind(this);
+		const hasActiveDownload = !!this.activeJob;
+		const hasProgress = hasActiveDownload || this.checkingCurrentJob;
 
 		return E([
 			E('h2', {}, [ _('Download eSIM profile') ]),
 			E('div', { 'class': 'cbi-map-descr' }, [
 				_('Download and install a profile with the lpac profile download operation. Use a complete LPA activation code, import it from a QR image, or provide the non-interactive lpac parameters manually.')
+			]),
+			E('div', { 'class': 'alert-message warning', 'role': 'note' }, [
+				_('Security warning: lpac does not currently verify the profile-download server\'s TLS certificate or hostname. Only continue with a trusted activation source and network.')
+			]),
+			E('div', {
+				'id': 'lpac-download-progress',
+				'class': 'alert-message notice',
+				'role': 'status',
+				'aria-live': 'polite',
+				'style': hasProgress ? '' : 'display:none'
+			}, [
+				E('span', { 'class': 'spinning' }),
+				' ',
+				E('span', { 'id': 'lpac-download-progress-text' }, [
+					this.checkingCurrentJob
+						? _('Unable to confirm whether a profile download is already running. Retrying automatically…')
+						: (hasActiveDownload
+							? _('Another profile download is running. Monitoring it before this form can be submitted.')
+							: '')
+				])
+			]),
+			E('div', {
+				'id': 'lpac-download-verification',
+				'class': 'alert-message warning',
+				'role': 'alert',
+				'style': this.retryBlocked ? '' : 'display:none'
+			}, [
+				_('The previous download outcome is unknown. Open Profiles and Notifications before returning here to retry.')
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, [ _('Download method') ]),
@@ -464,21 +994,30 @@ return view.extend({
 			E('div', { 'id': 'lpac-download-activation-fields' }, [
 				E('div', { 'class': 'cbi-section' }, [
 					E('h3', {}, [ _('Activation code') ]),
-					formRow(_('LPA string'),
-						textInput('lpac-activation-code', 'password',
-							'LPA:1$smdp.example.com$MATCHING-ID', 4096),
+					formRow(_('LPA string'), activationInput,
 						_('Paste the complete LPA string supplied by the provider.')),
-					formRow(_('QR image'), qrFile,
-						_('Select an eSIM QR image or use the device camera. Decoding happens locally in this browser.')),
+					formRow(_('QR image'), E('div', {}, [
+						qrFile,
+						qrCamera,
+						pickerButton('lpac-qr-file-button', _('Choose QR image'), qrFile),
+						' ',
+						pickerButton('lpac-qr-camera-button', _('Take QR photo'), qrCamera)
+					]),
+					_('Choose an existing QR image or take a new photo. Decoding happens locally in this browser.')),
 					E('div', { 'class': 'cbi-value' }, [
 						E('div', { 'class': 'cbi-value-title' }),
 						E('div', { 'class': 'cbi-value-field' }, [
 							E('img', {
 								'id': 'lpac-qr-preview',
 								'alt': _('Selected QR image preview'),
-								'style': 'display:none;max-width:18rem;max-height:12rem'
+								'style': 'display:none;max-width:100%;max-height:12rem'
 							}),
-							E('div', { 'id': 'lpac-qr-status', 'class': 'cbi-value-description' })
+							E('div', {
+								'id': 'lpac-qr-status',
+								'class': 'cbi-value-description',
+								'role': 'status',
+								'aria-live': 'polite'
+							})
 						])
 					])
 				])
@@ -487,33 +1026,39 @@ return view.extend({
 				E('div', { 'class': 'cbi-section' }, [
 					E('h3', {}, [ _('Manual parameters') ]),
 					formRow(_('SM-DP+ address'),
-						textInput('lpac-smdp', 'text', 'smdp.example.com', 255),
+						textInput('lpac-smdp', 'text', 'smdp.example.com', 255,
+							controlsDisabled),
 						_('Optional. When empty, lpac uses the default SM-DP+ address configured on the eUICC.')),
 					formRow(_('Matching ID'),
-						textInput('lpac-matching-id', 'password', '', 255),
+						textInput('lpac-matching-id', 'password', '', 255,
+							controlsDisabled),
 						_('Optional activation token passed to lpac with -m.'))
 				])
 			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, [ _('Additional parameters') ]),
 				formRow(_('Confirmation code'),
-					textInput('lpac-confirmation-code', 'password', _('Optional'), 255),
+					textInput('lpac-confirmation-code', 'password', _('Optional'), 255,
+						controlsDisabled),
 					_('Provide this when the activation code or download order requires confirmation.')),
 				formRow(_('IMEI'),
-					textInput('lpac-imei', 'text', _('Optional'), 16),
+					textInput('lpac-imei', 'text', _('Optional'), 16,
+						controlsDisabled),
 					_('Optional 14- to 16-digit device identifier passed to lpac with -i.'))
 			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
 				E('button', {
+					'id': 'lpac-download-clear',
 					'class': 'btn cbi-button cbi-button-reset',
-					'disabled': isReadonlyView,
+					'disabled': controlsDisabled,
 					'click': ui.createHandlerFn(this, 'clearForm')
 				}, [ _('Clear') ]),
 				' ',
 				E('button', {
 					'id': 'lpac-download-button',
 					'class': 'btn cbi-button cbi-button-positive important',
-					'disabled': isReadonlyView,
+					'disabled': controlsDisabled || this.qrDecoding ||
+						this.retryBlocked || null,
 					'click': ui.createHandlerFn(this, 'showDownloadModal')
 				}, [ _('Download profile') ])
 			])

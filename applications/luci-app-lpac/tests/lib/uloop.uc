@@ -2,28 +2,55 @@
 
 'use strict';
 
-export function task(worker, output) {
-	if (global.TEST_TASK_THROW)
-		die('task failed');
+export function process(executable, arguments, environment, output) {
+	if (global.TEST_PROCESS_THROW)
+		die('process failed');
 
-	if (global.TEST_TASK_NULL)
+	if (global.TEST_PROCESS_NULL)
 		return null;
 
 	const state = {
-		worker,
+		executable,
+		arguments,
+		environment,
 		output,
-		finished: false
+		pid: global.TEST_PROCESS_PID
 	};
 
-	global.TEST_LAST_TASK = state;
-	push(global.TEST_TASKS, state);
+	global.TEST_LAST_PROCESS = state;
+	push(global.TEST_PROCESSES, state);
 
 	return {
-		finished: function() {
-			if (global.TEST_TASK_FINISHED_THROW)
-				die('finished failed');
+		pid: function() {
+			if (global.TEST_PROCESS_PID_THROW)
+				die('pid failed');
 
-			return state.finished;
+			return state.pid;
 		}
 	};
-}
+};
+
+export function timer(timeout, callback) {
+	if (global.TEST_TIMER_THROW)
+		die('timer failed');
+
+	if (global.TEST_TIMER_NULL)
+		return null;
+
+	const state = {
+		timeout,
+		callback,
+		cancelled: false
+	};
+
+	global.TEST_LAST_TIMER = state;
+	push(global.TEST_TIMERS, state);
+
+	return {
+		cancel: function() {
+			global.TEST_TIMER_CANCEL_COUNT++;
+			state.cancelled = true;
+			return true;
+		}
+	};
+};

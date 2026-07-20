@@ -2,6 +2,12 @@
 
 'use strict';
 
+const DOWNLOAD_EXIT_SUCCESS = 64;
+const DOWNLOAD_EXIT_NOT_FOUND = 65;
+const DOWNLOAD_EXIT_NOT_EXECUTABLE = 66;
+const DOWNLOAD_EXIT_FAILED = 67;
+const DOWNLOAD_EXIT_SIGNALED = 68;
+
 function default_config() {
 	return {
 		global: {
@@ -47,27 +53,24 @@ function reset() {
 	global.TEST_EXEC_REPLY = null;
 	global.TEST_LAST_CALL = null;
 	global.TEST_LPAC_ACCESS = true;
-	global.TEST_ACCESS = null;
-	global.TEST_TASK_THROW = false;
-	global.TEST_TASK_NULL = false;
-	global.TEST_TASK_FINISHED_THROW = false;
-	global.TEST_TASKS = [];
-	global.TEST_LAST_TASK = null;
+	global.TEST_ACCESS_FAIL_PATH = null;
+	global.TEST_ACCESS_CALLS = [];
+	global.TEST_PROCESS_THROW = false;
+	global.TEST_PROCESS_NULL = false;
+	global.TEST_PROCESS_PID_THROW = false;
+	global.TEST_PROCESS_PID = 4321;
+	global.TEST_PROCESSES = [];
+	global.TEST_LAST_PROCESS = null;
+	global.TEST_TIMER_THROW = false;
+	global.TEST_TIMER_NULL = false;
+	global.TEST_TIMERS = [];
+	global.TEST_LAST_TIMER = null;
+	global.TEST_TIMER_CANCEL_COUNT = 0;
 	global.TEST_SYSTEM_EXIT = 0;
 	global.TEST_SYSTEM_THROW = false;
-	global.TEST_SYSTEM_CALL = null;
-	global.TEST_DEVNULL_OPEN_FAIL = false;
-	global.TEST_DEVNULL_OPEN = null;
-	global.TEST_DEVNULL_FD = 9;
-	global.TEST_DEVNULL_FILENO_FAIL = false;
-	global.TEST_DEVNULL_CLOSE_FAIL = false;
-	global.TEST_DEVNULL_CLOSE_ATTEMPTS = 0;
-	global.TEST_DEVNULL_CLOSED = false;
-	global.TEST_DUP2_FAIL_TARGET = null;
-	global.TEST_REDIRECT_EVENTS = [];
+	global.TEST_SYSTEM_CALLS = [];
 	global.system = function(argv, timeout) {
-		push(global.TEST_REDIRECT_EVENTS, 'system');
-		global.TEST_SYSTEM_CALL = { argv, timeout };
+		push(global.TEST_SYSTEM_CALLS, { argv, timeout });
 
 		if (global.TEST_SYSTEM_THROW)
 			die('system failed');
@@ -136,37 +139,7 @@ function manual_download(smdp, matching_id, confirmation, imei) {
 }
 
 function complete_download(exit_code) {
-	const state = global.TEST_LAST_TASK;
-
-	global.TEST_SYSTEM_EXIT = exit_code;
-
-	const output = state.worker();
-
-	state.finished = true;
-	state.output(output);
-
-	return output;
-}
-
-function check_redirection_failure(configure, expected_events, message) {
-	reset();
-	configure();
-
-	const started = manual_download('smdp.example.com', 'MATCH', 'secret', '');
-
-	check(started.success, `${message}: job starts`);
-	complete_download(0);
-
-	const status = invoke('get_download_status', {
-		job_id: started.data.job_id
-	});
-
-	check(!status.success && status.error == 'execution_failed' &&
-		global.TEST_SYSTEM_CALL === null && global.TEST_LOCK_CLOSE_COUNT == 2 &&
-		index(sprintf('%J', status), 'secret') < 0,
-		`${message}: lpac is not run and failure is redacted`);
-	same(global.TEST_REDIRECT_EVENTS, expected_events,
-		`${message}: redirection steps are ordered`);
+	global.TEST_LAST_PROCESS.output(exit_code);
 }
 
 function make_text(character, count) {
@@ -493,65 +466,97 @@ check(result.success && result.data.status == 'running' &&
 	type(result.data.job_id) == 'int',
 	'activation-code downloads start as asynchronous jobs');
 const activation_job_id = result.data.job_id;
-check(global.TEST_ACCESS.path == '/usr/bin/lpac' &&
-	global.TEST_ACCESS.mode == 'x',
-	'download startup verifies that the packaged lpac entrypoint is executable');
-check(global.TEST_LOCK_FLAGS == 'xn' && global.TEST_LOCK_CLOSED,
-	'download startup acquires the shared nonblocking lock and closes the parent handle');
-check(length(global.TEST_TASKS) == 1 && global.TEST_SYSTEM_CALL === null,
-	'download startup returns before invoking lpac');
+same(global.TEST_ACCESS_CALLS, [
+	{ path: '/usr/bin/lpac', mode: 'x' },
+	{ path: '/usr/bin/setsid', mode: 'x' },
+	{ path: '/bin/kill', mode: 'x' }
+], 'download startup verifies lpac and its fixed process supervisor tools');
+check(global.TEST_LOCK_FLAGS == 'xn' && global.TEST_LOCK_CLOSED &&
+	global.TEST_LOCK_CLOSE_COUNT == 1 && global.TEST_OPEN.mode == 'a',
+	'download startup passes an inheritable shared lock to the process group');
+check(length(global.TEST_PROCESSES) == 1 && length(global.TEST_TIMERS) == 1 &&
+	length(global.TEST_SYSTEM_CALLS) == 0,
+	'download startup returns after registering one process and one timer');
+check(global.TEST_LAST_PROCESS.executable == '/usr/bin/setsid' &&
+	global.TEST_LAST_TIMER.timeout == 600000,
+	'downloads run in an isolated process group with a ten-minute timer');
+same(global.TEST_LAST_PROCESS.environment,
+	{ PATH: '/usr/sbin:/usr/bin:/sbin:/bin' },
+	'the supervisor receives only the fixed command search path');
+same(global.TEST_LAST_PROCESS.arguments, [
+	'/bin/sh', '-c', '"$@" >/dev/null 2>&1\n' +
+		'code=$?\n' +
+		'[ "$code" -eq 0 ] && exit 64\n' +
+		'[ "$code" -eq 127 ] && exit 65\n' +
+		'[ "$code" -eq 126 ] && exit 66\n' +
+		'[ "$code" -ge 128 ] && [ "$code" -lt 255 ] && exit 68\n' +
+		'exit 67',
+	'luci-lpac-download', '/usr/bin/lpac', 'profile', 'download', '-a',
+	'LPA:1$smdp.example.com$MATCHING-ID$1.2.840.113549$1',
+	'-i', '1234567890123456', '-c', confirmation_code
+], 'the fixed redirection script keeps activation values in positional argv');
+check(index(global.TEST_LAST_PROCESS.arguments[2], confirmation_code) < 0 &&
+	index(global.TEST_LAST_PROCESS.arguments[2], 'MATCHING-ID') < 0,
+	'the fixed shell program contains no activation or confirmation secret');
 result = invoke('get_download_status', { job_id: activation_job_id });
 check(result.success && result.data.status == 'running',
 	'running download jobs can be polled without exposing arguments');
-complete_download(0);
-same(global.TEST_SYSTEM_CALL.argv, [
-	'/usr/bin/lpac', 'profile', 'download', '-a',
-	'LPA:1$smdp.example.com$MATCHING-ID$1.2.840.113549$1',
-	'-i', '1234567890123456', '-c', confirmation_code
-], 'lowercase LPA schemes are normalized and literal dollar signs stay in one argv element');
-check(global.TEST_SYSTEM_CALL.timeout == 600000,
-	'profile downloads use the bounded ten-minute worker timeout');
-same(global.TEST_REDIRECT_EVENTS, [
-	'open:/dev/null:w', 'fileno:9', 'dup2:9:1', 'dup2:1:2',
-	'close:9', 'system'
-], 'worker stdout and stderr are redirected and the high sink closes before system');
-check(global.TEST_DEVNULL_OPEN.path == '/dev/null' &&
-	global.TEST_DEVNULL_OPEN.mode == 'w' && global.TEST_DEVNULL_CLOSED &&
-	global.TEST_DEVNULL_CLOSE_ATTEMPTS == 1 && global.TEST_LOCK_CLOSE_COUNT == 2,
-	'the worker uses one writable devnull sink and releases its inherited lock');
+result = invoke('get_download_status', { job_id: 0 });
+check(result.success && result.data.status == 'running' &&
+	result.data.job_id == activation_job_id,
+	'the current-job query can recover a running download after UI state loss');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
 result = invoke('get_download_status', { job_id: activation_job_id });
 check(result.success && result.data.status == 'success' &&
 	index(sprintf('%J', result), confirmation_code) < 0 &&
-	index(sprintf('%J', result), 'MATCHING-ID') < 0,
-	'success polling returns no activation or confirmation secret');
+	index(sprintf('%J', result), 'MATCHING-ID') < 0 &&
+	global.TEST_TIMER_CANCEL_COUNT == 1,
+	'success polling is redacted and completion cancels the watchdog');
+result = invoke('get_download_status', { job_id: 0 });
+check(result.success && result.data.status == 'idle' && !('job_id' in result.data),
+	'the current-job query does not replay stale terminal jobs');
+
+reset();
+const copied_speedtest =
+	'\t\u200b  LPA:1$rsp.truphone.com$QRF-SPEEDTEST\u2060\ufeff\r\n';
+result = activation_download(copied_speedtest, '', '');
+check(result.success && result.data.status == 'running',
+	'harmless whitespace and invisible formatting at activation-code edges are accepted');
+const speedtest_job_id = result.data.job_id;
+same(slice(global.TEST_LAST_PROCESS.arguments, 4), [
+	'/usr/bin/lpac', 'profile', 'download', '-a',
+	'LPA:1$rsp.truphone.com$QRF-SPEEDTEST'
+], 'the exact copied Speedtest code is stripped only at its boundaries');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
+result = invoke('get_download_status', { job_id: speedtest_job_id });
+check(result.success && result.data.status == 'success',
+	'the normalized copied activation code completes normally');
 
 reset();
 result = activation_download('LPA:1$smdp.example.com$', '', '');
 check(result.success && result.data.status == 'running',
 	'activation codes accept an empty optional matching ID like upstream lpac');
 const empty_matching_job_id = result.data.job_id;
-complete_download(0);
-same(global.TEST_SYSTEM_CALL.argv, [
+same(slice(global.TEST_LAST_PROCESS.arguments, 4), [
 	'/usr/bin/lpac', 'profile', 'download', '-a',
 	'LPA:1$smdp.example.com$'
 ], 'an empty activation-code matching ID is preserved in its exact argv element');
-result = invoke('get_download_status', { job_id: empty_matching_job_id });
-check(result.success && result.data.status == 'success',
+complete_download(DOWNLOAD_EXIT_SUCCESS);
+check(invoke('get_download_status', { job_id: empty_matching_job_id }).success,
 	'activation downloads without a matching ID complete normally');
 
 reset();
-global.TEST_DEVNULL_FD = 2;
-result = manual_download('smdp.example.com', 'LOW-FD', '', '');
-check(result.success, 'downloads start when broken task stdio causes devnull to reuse fd 2');
-const low_sink_job_id = result.data.job_id;
-complete_download(0);
-same(global.TEST_REDIRECT_EVENTS, [
-	'open:/dev/null:w', 'fileno:2', 'dup2:2:1', 'dup2:1:2', 'system'
-], 'a low devnull source is retained through system instead of closing stderr');
-result = invoke('get_download_status', { job_id: low_sink_job_id });
-check(result.success && result.data.status == 'success' &&
-	global.TEST_DEVNULL_CLOSE_ATTEMPTS == 0,
-	'fd-2 redirection completes without explicitly closing the live source');
+result = activation_download('LPA:1$smdp.example.com$MATCH$OID$', '', '');
+check(result.success && result.data.status == 'running',
+	'an empty optional fifth activation-code field is accepted');
+const empty_flag_job_id = result.data.job_id;
+same(slice(global.TEST_LAST_PROCESS.arguments, 4), [
+	'/usr/bin/lpac', 'profile', 'download', '-a',
+	'LPA:1$smdp.example.com$MATCH$OID'
+], 'an empty fifth field is omitted for lpac 2.3.0 compatibility');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
+check(invoke('get_download_status', { job_id: empty_flag_job_id }).success,
+	'the canonicalized optional-flag download completes normally');
 
 reset();
 result = manual_download('[2001:db8::1]:443', 'MANUAL-ID', '1234',
@@ -559,12 +564,14 @@ result = manual_download('[2001:db8::1]:443', 'MANUAL-ID', '1234',
 check(result.success && result.data.status == 'running',
 	'manual downloads accept explicit SM-DP+, matching ID, confirmation code, and IMEI');
 const manual_job_id = result.data.job_id;
-complete_download(0);
-same(global.TEST_SYSTEM_CALL.argv, [
+same(slice(global.TEST_LAST_PROCESS.arguments, 4), [
 	'/usr/bin/lpac', 'profile', 'download',
 	'-s', '[2001:db8::1]:443', '-m', 'MANUAL-ID',
 	'-i', '12345678901234', '-c', '1234'
-], 'manual download options remain distinct fixed argv elements');
+], 'manual download options remain distinct positional argv elements');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
+check(invoke('get_download_status', { job_id: manual_job_id }).success,
+	'manual download completion is pollable');
 result = invoke('get_download_status', { job_id: activation_job_id });
 check(result.success && result.data.status == 'success',
 	'a completed job remains pollable after a later download starts');
@@ -574,10 +581,10 @@ result = manual_download('', '', '', '');
 check(result.success && result.data.status == 'running',
 	'manual mode may use the eUICC default SM-DP+ without optional flags');
 const default_server_job_id = result.data.job_id;
-complete_download(0);
-same(global.TEST_SYSTEM_CALL.argv,
+same(slice(global.TEST_LAST_PROCESS.arguments, 4),
 	[ '/usr/bin/lpac', 'profile', 'download' ],
 	'an empty manual request mirrors the upstream default-server invocation');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
 result = invoke('get_download_status', { job_id: default_server_job_id });
 check(result.success && result.data.status == 'success',
 	'default-server download completion is reported');
@@ -586,51 +593,55 @@ reset();
 result = manual_download('', 'MATCH-ONLY', '', '');
 check(result.success, 'manual mode accepts an independently supplied matching ID');
 const matching_only_job_id = result.data.job_id;
-complete_download(0);
-same(global.TEST_SYSTEM_CALL.argv,
+same(slice(global.TEST_LAST_PROCESS.arguments, 4),
 	[ '/usr/bin/lpac', 'profile', 'download', '-m', 'MATCH-ONLY' ],
 	'matching-ID-only downloads omit the SM-DP+ flag');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
 check(invoke('get_download_status', { job_id: matching_only_job_id }).success,
 	'matching-ID-only completion is pollable');
 
 reset();
 result = activation_download('LPA:1$smdp.example.com$MATCH$OID$1', '', '');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'activation codes that require confirmation are rejected without a confirmation code');
 result = activation_download('LPA:1$smdp.example.com$BAD_ID', '', '');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'activation-code matching IDs use the same strict format as upstream lpac');
+result = activation_download('LPA:1$smdp.example.com$MATCH\u2060ID', '', '');
+check(!result.success && result.error == 'invalid_argument' &&
+	global.TEST_LAST_PROCESS === null,
+	'invisible formatting inside an activation secret is never removed silently');
 result = activation_download('LPA:1$smdp.example.com/path$MATCH', '', '');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'activation-code SM-DP+ values containing URL paths are rejected');
 result = activation_download('LPA:1$smdp.example.com$MATCH\nSECOND', '', '');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'activation codes containing control characters are rejected');
 result = activation_download(make_text('A', 4097), '', '');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
-	'oversized activation codes are rejected before task creation');
+	global.TEST_LAST_PROCESS === null,
+	'oversized activation codes are rejected before process creation');
 
 reset();
 result = manual_download('smdp.example.com/endpoint', 'MATCH', '', '');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'manual SM-DP+ URL paths are rejected');
 result = manual_download('smdp.example.com', 'BAD_ID', '', '');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'manual matching IDs containing punctuation are rejected');
 result = manual_download('smdp.example.com', 'MATCH', 'bad\ncode', '');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'confirmation codes containing control characters are rejected');
 result = manual_download('smdp.example.com', 'MATCH', '', '1234');
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'invalid IMEI lengths are rejected');
 result = invoke('download_profile', {
 	mode: 'manual',
@@ -641,7 +652,7 @@ result = invoke('download_profile', {
 	confirmation_code: ''
 });
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'manual mode cannot mix an activation code with separate parameters');
 result = invoke('download_profile', {
 	mode: 'other',
@@ -652,26 +663,29 @@ result = invoke('download_profile', {
 	confirmation_code: ''
 });
 check(!result.success && result.error == 'invalid_argument' &&
-	global.TEST_LAST_TASK === null,
+	global.TEST_LAST_PROCESS === null,
 	'unknown download modes are rejected');
 
 reset();
 result = manual_download('smdp.example.com', 'FIRST', 'do-not-return', '');
 check(result.success, 'a download can be started for concurrency checks');
 const busy_job_id = result.data.job_id;
-const busy_task = global.TEST_LAST_TASK;
+const busy_process = global.TEST_LAST_PROCESS;
 result = manual_download('smdp.example.com', 'SECOND', '', '');
 check(!result.success && result.error == 'busy' &&
-	length(global.TEST_TASKS) == 1 &&
+	length(global.TEST_PROCESSES) == 1 &&
 	index(sprintf('%J', result), 'FIRST') < 0,
 	'duplicate download requests are rejected without leaking the active secret');
+result = invoke('get_download_status', { job_id: 0 });
+check(result.success && result.data.job_id == busy_job_id,
+	'a client can attach to the active job after a duplicate or lost start response');
 global.TEST_LOCK_BUSY = true;
 result = invoke('set_config', { config: default_config() });
 check(!result.success && result.error == 'busy',
 	'the inherited download lock serializes configuration changes');
 global.TEST_LOCK_BUSY = false;
-global.TEST_LAST_TASK = busy_task;
-complete_download(0);
+global.TEST_LAST_PROCESS = busy_process;
+complete_download(DOWNLOAD_EXIT_SUCCESS);
 check(invoke('get_download_status', { job_id: busy_job_id }).success,
 	'the active job still completes after rejected concurrent operations');
 
@@ -679,94 +693,164 @@ reset();
 global.TEST_LOCK_BUSY = true;
 result = manual_download('smdp.example.com', 'MATCH', '', '');
 check(!result.success && result.error == 'busy' &&
-	global.TEST_LAST_TASK === null && global.TEST_LOCK_CLOSED,
-	'a busy shared lock prevents task creation and closes its handle');
+	global.TEST_LAST_PROCESS === null && global.TEST_LOCK_CLOSED,
+	'a busy shared lock prevents process creation and closes its handle');
 
 reset();
 global.TEST_UCI_LOAD_FAIL = true;
 result = manual_download('smdp.example.com', 'MATCH', '', '');
 check(!result.success && result.error == 'invalid_config' &&
-	global.TEST_ACCESS === null && global.TEST_LAST_TASK === null,
-	'invalid UCI prevents executable checks, locking, and task creation');
+	length(global.TEST_ACCESS_CALLS) == 0 && global.TEST_LAST_PROCESS === null,
+	'invalid UCI prevents executable checks, locking, and process creation');
 
 reset();
 global.TEST_LPAC_ACCESS = false;
 result = manual_download('smdp.example.com', 'MATCH', '', '');
 check(!result.success && result.error == 'not_installed' &&
-	global.TEST_LAST_TASK === null && !global.TEST_LOCK_EXISTS,
+	global.TEST_LAST_PROCESS === null && !global.TEST_LOCK_EXISTS,
 	'a missing or non-executable lpac entrypoint is detected before locking');
 
 reset();
-global.TEST_TASK_NULL = true;
+global.TEST_ACCESS_FAIL_PATH = '/usr/bin/setsid';
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+check(!result.success && result.error == 'not_installed' &&
+	global.TEST_LAST_PROCESS === null && !global.TEST_LOCK_EXISTS,
+	'a missing process supervisor is detected before locking');
+
+reset();
+global.TEST_PROCESS_NULL = true;
 result = manual_download('smdp.example.com', 'MATCH', '', '');
 check(!result.success && result.error == 'execution_failed' &&
-	global.TEST_LOCK_CLOSED,
-	'a null uloop task result is normalized and releases the parent lock');
-global.TEST_TASK_NULL = false;
+	global.TEST_LOCK_CLOSED && global.TEST_TIMER_CANCEL_COUNT == 1,
+	'a null uloop process result cancels its timer and releases the parent lock');
+global.TEST_PROCESS_NULL = false;
 result = manual_download('smdp.example.com', 'RECOVERY', '', '');
-check(result.success, 'task startup failure does not leave a stale running job');
+check(result.success, 'process startup failure does not leave a stale running job');
 const recovered_job_id = result.data.job_id;
-complete_download(0);
+complete_download(DOWNLOAD_EXIT_SUCCESS);
 check(invoke('get_download_status', { job_id: recovered_job_id }).success,
-	'a job can complete after recovery from task startup failure');
+	'a job can complete after recovery from process startup failure');
 
 reset();
-global.TEST_TASK_THROW = true;
+global.TEST_TIMER_NULL = true;
 result = manual_download('smdp.example.com', 'MATCH', '', '');
 check(!result.success && result.error == 'execution_failed' &&
-	global.TEST_LOCK_CLOSED,
-	'a thrown uloop task startup error is normalized and releases the lock');
-
-check_redirection_failure(function() {
-	global.TEST_DEVNULL_OPEN_FAIL = true;
-}, [ 'open:/dev/null:w' ], 'devnull open failure');
-
-check_redirection_failure(function() {
-	global.TEST_DEVNULL_FILENO_FAIL = true;
-}, [
-	'open:/dev/null:w', 'fileno:9', 'close:9'
-], 'devnull descriptor failure');
-
-check_redirection_failure(function() {
-	global.TEST_DUP2_FAIL_TARGET = 1;
-}, [
-	'open:/dev/null:w', 'fileno:9', 'dup2:9:1', 'close:9'
-], 'stdout redirection failure');
-
-check_redirection_failure(function() {
-	global.TEST_DUP2_FAIL_TARGET = 2;
-}, [
-	'open:/dev/null:w', 'fileno:9', 'dup2:9:1', 'dup2:1:2', 'close:9'
-], 'stderr redirection failure');
-
-check_redirection_failure(function() {
-	global.TEST_DEVNULL_CLOSE_FAIL = true;
-}, [
-	'open:/dev/null:w', 'fileno:9', 'dup2:9:1', 'dup2:1:2', 'close:9'
-], 'devnull close failure');
+	global.TEST_LOCK_CLOSED && global.TEST_LAST_PROCESS === null,
+	'a missing watchdog timer prevents process creation and releases the lock');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', 'worker-secret', '');
-const worker_failure_job_id = result.data.job_id;
+global.TEST_TIMER_THROW = true;
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+check(!result.success && result.error == 'execution_failed' &&
+	global.TEST_LOCK_CLOSED && global.TEST_LAST_PROCESS === null &&
+	global.TEST_TIMER_CANCEL_COUNT == 0,
+	'a thrown watchdog startup failure prevents process creation and releases the lock');
+
+reset();
+global.TEST_PROCESS_THROW = true;
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+check(!result.success && result.error == 'execution_failed' &&
+	global.TEST_LOCK_CLOSED && global.TEST_TIMER_CANCEL_COUNT == 1,
+	'a thrown process startup failure is normalized and cancels the timer');
+
+reset();
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+const pid_throw_job_id = result.data.job_id;
+global.TEST_PROCESS_PID_THROW = true;
+global.TEST_LAST_TIMER.callback();
+check(length(global.TEST_SYSTEM_CALLS) == 0 &&
+	invoke('get_download_status', { job_id: pid_throw_job_id }).data.status == 'running',
+	'a thrown PID lookup cannot signal an unrelated process or finish the job early');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
+result = invoke('get_download_status', { job_id: pid_throw_job_id });
+check(!result.success && result.error == 'timeout' &&
+	result.reason == 'outcome_unknown' && global.TEST_TIMER_CANCEL_COUNT == 1,
+	'the watchdog remains authoritative when PID lookup throws');
+
+reset();
+global.TEST_PROCESS_PID = 1;
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+const invalid_pid_job_id = result.data.job_id;
+global.TEST_LAST_TIMER.callback();
+check(length(global.TEST_SYSTEM_CALLS) == 0 &&
+	invoke('get_download_status', { job_id: invalid_pid_job_id }).data.status == 'running',
+	'an unsafe process-group PID is never passed to kill');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
+result = invoke('get_download_status', { job_id: invalid_pid_job_id });
+check(!result.success && result.error == 'timeout' &&
+	result.reason == 'outcome_unknown' && global.TEST_TIMER_CANCEL_COUNT == 1,
+	'the watchdog remains authoritative for an invalid process PID');
+
+reset();
+global.TEST_SYSTEM_EXIT = 1;
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+const kill_failure_job_id = result.data.job_id;
+global.TEST_LAST_TIMER.callback();
+check(length(global.TEST_SYSTEM_CALLS) == 1 &&
+	invoke('get_download_status', { job_id: kill_failure_job_id }).data.status == 'running',
+	'a failed group-kill command leaves cleanup to the process callback');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
+result = invoke('get_download_status', { job_id: kill_failure_job_id });
+check(!result.success && result.error == 'timeout' &&
+	result.reason == 'outcome_unknown' && global.TEST_TIMER_CANCEL_COUNT == 1,
+	'the watchdog remains authoritative when group kill returns failure');
+
+reset();
 global.TEST_SYSTEM_THROW = true;
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+const kill_throw_job_id = result.data.job_id;
+global.TEST_LAST_TIMER.callback();
+check(length(global.TEST_SYSTEM_CALLS) == 1 &&
+	invoke('get_download_status', { job_id: kill_throw_job_id }).data.status == 'running',
+	'a thrown group-kill error leaves cleanup to the process callback');
+complete_download(DOWNLOAD_EXIT_SUCCESS);
+result = invoke('get_download_status', { job_id: kill_throw_job_id });
+check(!result.success && result.error == 'timeout' &&
+	result.reason == 'outcome_unknown' && global.TEST_TIMER_CANCEL_COUNT == 1,
+	'the watchdog remains authoritative when group kill throws');
+
+reset();
+result = manual_download('smdp.example.com', 'MATCH', 'timeout-secret', '');
+const timeout_job_id = result.data.job_id;
+global.TEST_LAST_TIMER.callback();
+same(global.TEST_SYSTEM_CALLS, [ {
+	argv: [ '/bin/kill', '-KILL', '-4321' ],
+	timeout: null
+} ], 'the timeout kills the entire isolated lpac process group');
+result = invoke('get_download_status', { job_id: timeout_job_id });
+check(result.success && result.data.status == 'running' &&
+	global.TEST_TIMER_CANCEL_COUNT == 0,
+	'the timeout callback does not release state or cancel its timer before process reap');
 complete_download(0);
-result = invoke('get_download_status', { job_id: worker_failure_job_id });
-check(!result.success && result.error == 'execution_failed' &&
-	index(sprintf('%J', result), 'worker-secret') < 0,
-	'worker execution exceptions are reported without treating them as lpac errors or leaking secrets');
+result = invoke('get_download_status', { job_id: timeout_job_id });
+check(!result.success && result.error == 'timeout' &&
+	result.reason == 'outcome_unknown' && !('code' in result) &&
+	index(sprintf('%J', result), 'timeout-secret') < 0 &&
+	global.TEST_TIMER_CANCEL_COUNT == 1,
+	'timeout is redacted and warns that the resulting eUICC state is unknown');
 
 reset();
 result = manual_download('smdp.example.com', 'MATCH', '', '');
-const timeout_job_id = result.data.job_id;
-complete_download(-9);
-result = invoke('get_download_status', { job_id: timeout_job_id });
-check(!result.success && result.error == 'timeout' && !('code' in result),
-	'the worker timeout signal is mapped without exposing a raw negative code');
+const supervisor_signal_job_id = result.data.job_id;
+complete_download(0);
+result = invoke('get_download_status', { job_id: supervisor_signal_job_id });
+check(!result.success && result.error == 'execution_failed' &&
+	result.reason == 'outcome_unknown' && !('code' in result),
+	'a supervisor signal reported as raw zero by uloop is never treated as success');
+
+reset();
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+const child_signal_job_id = result.data.job_id;
+complete_download(DOWNLOAD_EXIT_SIGNALED);
+result = invoke('get_download_status', { job_id: child_signal_job_id });
+check(!result.success && result.error == 'execution_failed' &&
+	result.reason == 'outcome_unknown' && !('code' in result),
+	'the wrapper reports a signalled lpac child as an uncertain execution failure');
 
 reset();
 result = manual_download('smdp.example.com', 'MATCH', '', '');
 const wrapper_missing_job_id = result.data.job_id;
-complete_download(127);
+complete_download(DOWNLOAD_EXIT_NOT_FOUND);
 result = invoke('get_download_status', { job_id: wrapper_missing_job_id });
 check(!result.success && result.error == 'not_installed',
 	'a packaged wrapper that cannot exec its lpac binary is mapped as not installed');
@@ -774,28 +858,48 @@ check(!result.success && result.error == 'not_installed',
 reset();
 result = manual_download('smdp.example.com', 'MATCH', 'failure-secret', '');
 const lpac_failure_job_id = result.data.job_id;
-complete_download(17);
+complete_download(DOWNLOAD_EXIT_FAILED);
 result = invoke('get_download_status', { job_id: lpac_failure_job_id });
-check(!result.success && result.error == 'lpac_error' && result.code == 17 &&
+check(!result.success && result.error == 'lpac_error' &&
+	result.reason == 'download_failed' && !('code' in result) &&
 	index(sprintf('%J', result), 'failure-secret') < 0,
-	'nonzero lpac exits return only a generic error and numeric code');
+	'the generic lpac failure is mapped without exposing provider, input, or raw 255');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', 'lost-secret', '');
-const missing_result_job_id = result.data.job_id;
-global.TEST_LAST_TASK.finished = true;
-result = invoke('get_download_status', { job_id: missing_result_job_id });
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+const noexec_job_id = result.data.job_id;
+complete_download(DOWNLOAD_EXIT_NOT_EXECUTABLE);
+result = invoke('get_download_status', { job_id: noexec_job_id });
 check(!result.success && result.error == 'execution_failed' &&
-	index(sprintf('%J', result), 'lost-secret') < 0,
-	'a finished task with no serialized result becomes a redacted execution failure');
+	!('reason' in result),
+	'a non-executable wrapper or binary is reported as an execution failure');
+
+reset();
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+const supervisor_failure_job_id = result.data.job_id;
+complete_download(255);
+result = invoke('get_download_status', { job_id: supervisor_failure_job_id });
+check(!result.success && result.error == 'execution_failed' &&
+	result.reason == 'outcome_unknown' && !('code' in result),
+	'an exit outside the fixed wrapper protocol is an uncertain supervisor failure');
+
+reset();
+result = manual_download('smdp.example.com', 'MATCH', '', '');
+const missing_status_job_id = result.data.job_id;
+complete_download(null);
+result = invoke('get_download_status', { job_id: missing_status_job_id });
+check(!result.success && result.error == 'execution_failed' &&
+	result.reason == 'outcome_unknown' && !('code' in result),
+	'a missing process status is an uncertain execution failure');
 
 reset();
 result = invoke('get_download_status', { job_id: 2147483647 });
 check(!result.success && result.error == 'job_not_found',
 	'unknown but well-formed download job IDs are rejected');
-check(!invoke('get_download_status', { job_id: 0 }).success &&
+check(invoke('get_download_status', { job_id: 0 }).success &&
+	!invoke('get_download_status', { job_id: -1 }).success &&
 	!invoke('get_download_status', { job_id: '1' }).success &&
 	!invoke('get_download_status', { job_id: 2147483648 }).success,
-	'malformed or out-of-range download job IDs are rejected');
+	'current-job sentinel is accepted while malformed or out-of-range IDs are rejected');
 
 printf(`1..${checks}\n`);

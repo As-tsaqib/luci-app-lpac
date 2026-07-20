@@ -92,17 +92,17 @@ return view.extend({
 			const info2 = info.EUICCInfo2 || {};
 			const resources = info2.extCardResource || {};
 
-				nodes.push(E('div', { 'class': 'cbi-section' }, [
-					E('h3', {}, [ _('eUICC information') ]),
-					detailsTable([
-						_('EID'), info.eidValue,
-						_('Firmware version'), info2.euiccFirmwareVer,
-						_('Profile specification'), info2.profileVersion,
-						_('SVN version'), info2.svn,
-						_('Default SM-DP+ address'), addresses.defaultDpAddress,
-						_('Root SM-DS address'), addresses.rootDsAddress,
-						_('Free non-volatile memory'), formatBytes(resources.freeNonVolatileMemory),
-						_('Free volatile memory'), formatBytes(resources.freeVolatileMemory)
+			nodes.push(E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, [ _('eUICC information') ]),
+				detailsTable([
+					_('EID'), info.eidValue,
+					_('Firmware version'), info2.euiccFirmwareVer,
+					_('Profile specification'), info2.profileVersion,
+					_('SVN version'), info2.svn,
+					_('Default SM-DP+ address'), addresses.defaultDpAddress,
+					_('Root SM-DS address'), addresses.rootDsAddress,
+					_('Free non-volatile memory'), formatBytes(resources.freeNonVolatileMemory),
+					_('Free volatile memory'), formatBytes(resources.freeVolatileMemory)
 				])
 			]));
 		}

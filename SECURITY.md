@@ -22,14 +22,22 @@ The values nevertheless exist in browser and RPC memory and necessarily become
 arguments of the privileged lpac process, where privileged local process
 inspection can observe them while the operation runs.
 
-The worker discards lpac stdout and stderr. Legacy ucode releases without
-file-descriptor duplication use a constant positional shell redirection shim;
-request values are argv entries and are not interpolated into that script.
+Download status contains only an opaque job identifier and sanitized state.
+The current-job query carries no request nonce, so a job found after a lost RPC
+response is treated as uncertain: the browser preserves the form and requires
+the operator to verify Profiles and Notifications before retrying.
+
+The download supervisor discards lpac stdout and stderr and runs a constant
+positional shell launcher in a dedicated process group. Request values remain
+separate argv entries and are never interpolated into shell source. The shared
+lock descriptor is inherited by the group, and the ten-minute watchdog targets
+the whole process group before reporting a sanitized terminal state.
 
 QR image selection and decoding happen locally in the browser; the image is
-not uploaded to the router. Declared file type (when available), byte size,
-pixel count, decoded format, and activation-code fields are bounded before the
-RPC call.
+not uploaded to the router. File choice and camera capture are separate actions,
+and only the camera action carries a capture hint. Declared file type (when
+available), byte size, pixel count, decoded format, and activation-code fields
+are bounded before the RPC call.
 
 The download uses the HTTP backend configured for the installed lpac package.
 LuCI does not replace, override, or independently verify its TLS behavior. The
