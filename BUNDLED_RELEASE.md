@@ -27,17 +27,28 @@ The binary is built from the official lpac v2.3.0 archive with:
 4. The version fix already merged in upstream lpac pull request 310.
 5. The MBIM UICC compatibility changes merged from upstream pull request 438
    as commit `79fcec9d89a247f1a1995f7b4560ea819bfe654f`.
+6. Notification sequence zero handling from upstream pull request 429 plus a
+   strict decimal `uint32_t` parser that rejects truncation and trailing data.
+7. Correct discovery option parsing and `profile discovery -j`, which keeps
+   both the SM-DS EventID and RSP server address for direct download.
+8. A mandatory `profile download -p` confirmation gate even when the provider
+   omits profile metadata.
+9. Provider-status string hardening from upstream pull request 444 / commit
+   `3ff35594ec15062a3ed10c3da1c26eb0a13390b8`.
+10. Curl peer and hostname verification using OpenWrt's system CA bundle.
+11. Overflow-safe curl response accumulation capped at 16 MiB to prevent a
+    provider response from exhausting router memory.
 
-The downstream package version is `2.3.0.438-r2`; `lpac version` reports the
+The downstream package version is `2.3.0.444-r1`; `lpac version` reports the
 upstream source version `2.3.0`. These upstream fixes were merged after the
 v2.3.0 tag, so this bundle backports them until lpac publishes a newer
 release. The ZIPs remain unofficial downstream OpenWrt packages.
 
-Discard any earlier `2.3.0.438-r1` CI artifact. It was never published as a
-release and inherited the v2.3.0 parser bug that treated numeric UCI boolean
-values such as `proxy=1` and `skip_slot_mapping=1` as false. In `r2`, those
-settings take effect as configured; multi-slot users should verify whether
-slot mapping should remain enabled or disabled for their hardware.
+All `2.3.0.438-rN` artifacts are superseded. The `2.3.0.444-r1` package keeps
+the corrected UCI boolean handling, so numeric settings such as `proxy=1` and
+`skip_slot_mapping=1` take effect as configured. Multi-slot users should
+verify whether slot mapping should remain enabled or disabled for their
+hardware.
 
 MBIM skip-slot-mapping is enabled by default in this bundle. Disable it on a
 multi-slot device or any device that requires normal slot discovery:
@@ -58,13 +69,16 @@ The slot-mapping bypass can be changed at
 
 The Download view invokes the packaged `lpac profile download` operation and
 inherits its configured HTTP transport. LuCI does not replace or independently
-verify that transport. This bundled lpac v2.3.0 build disables curl peer and
-hostname verification, so users should assess that behavior before submitting
-activation or confirmation credentials. QR images are decoded locally in the
-browser and are not uploaded to the router. SM-DS discovery and network
-notification processing are not exposed by this LuCI release.
+verify that transport. This bundled build enables curl certificate-chain and
+hostname verification against `/etc/ssl/certs/ca-certificates.crt` and depends
+explicitly on `ca-bundle`. A wrong router clock, an invalid provider
+certificate, or a missing trust anchor therefore fails closed. QR images are
+decoded locally in the browser and are not uploaded to the router. Provider
+response bodies above 16 MiB fail closed before further JSON/base64 copies can
+amplify their memory use.
 
 Install only the ZIP matching both your OpenWrt major release and package
 architecture. Each ZIP contains `INSTALL.txt` and `SHA256SUMS`. Installation
 requires access to the matching official OpenWrt feeds for runtime
-dependencies such as LuCI, `ucode-mod-uloop`, libcurl, libmbim, and uqmi.
+dependencies such as LuCI, `ucode-mod-uloop`, `ca-bundle`, libcurl, libmbim,
+and uqmi.

@@ -1,0 +1,46 @@
+From 8f68d5c7e5c89519e831c2532134b590ed4d108f Mon Sep 17 00:00:00 2001
+From: Andreas Eversberg <85940233+Eversberg@users.noreply.github.com>
+Date: Sun, 14 Jun 2026 15:34:01 +0200
+Subject: [PATCH] fix: handling of notification with sequence number 0 correctly
+
+Backport upstream pull request 429. A successful decimal conversion may
+legitimately return zero; no-conversion is identified by an unchanged end
+pointer instead.
+---
+ src/applet/notification/dump.c    | 2 +-
+ src/applet/notification/process.c | 2 +-
+ src/applet/notification/remove.c  | 2 +-
+ 3 files changed, 3 insertions(+), 3 deletions(-)
+
+--- a/src/applet/notification/dump.c
++++ b/src/applet/notification/dump.c
+@@ -84,7 +84,7 @@ static int applet_main(const int argc, c
+             // Although POSIX said user should check errno instead of return value,
+             // but errno may not be set when no conversion is performed according to C99.
+             // Check nptr is same as str_end to ensure there is no conversion.
+-            if ((seqNumber == 0 && strcmp(argv[i], str_end)) || errno != 0) {
++            if (argv[i] == str_end || errno != 0) {
+                 continue;
+             }
+             if (!retrieve_notification(eid, seqNumber)) {
+--- a/src/applet/notification/process.c
++++ b/src/applet/notification/process.c
+@@ -109,7 +109,7 @@ static int applet_main(int argc, char **
+             // Although POSIX said user should check errno instead of return value,
+             // but errno may not be set when no conversion is performed according to C99.
+             // Check nptr is same as str_end to ensure there is no conversion.
+-            if ((seqNumber == 0 && strcmp(argv[i], str_end)) || errno != 0) {
++            if (argv[i] == str_end || errno != 0) {
+                 continue;
+             }
+             if (_process_single(seqNumber, autoremove)) {
+--- a/src/applet/notification/remove.c
++++ b/src/applet/notification/remove.c
+@@ -83,6 +83,6 @@ static int applet_main(int argc, char **
+             // Although POSIX said user should check errno instead of return value,
+             // but errno may not be set when no conversion is performed according to C99.
+             // Check nptr is same as str_end to ensure there is no conversion.
+-            if ((seqNumber == 0 && strcmp(argv[i], str_end)) || errno != 0) {
++            if (argv[i] == str_end || errno != 0) {
+                 continue;
+             }

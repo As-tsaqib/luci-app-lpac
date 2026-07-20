@@ -4,8 +4,8 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=lpac
 LPAC_UPSTREAM_VERSION:=2.3.0
-PKG_VERSION:=$(LPAC_UPSTREAM_VERSION).438
-PKG_RELEASE:=2
+PKG_VERSION:=$(LPAC_UPSTREAM_VERSION).444
+PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(LPAC_UPSTREAM_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/estkme-group/lpac/tar.gz/refs/tags/v$(LPAC_UPSTREAM_VERSION)?
@@ -25,6 +25,7 @@ define Package/lpac
   CATEGORY:=Utilities
   TITLE:=eUICC eSIM LPA written in C (compatibility build)
   DEPENDS:= \
+    +ca-bundle \
     +libcurl \
     +LPAC_WITH_PCSC:libpcsclite \
     +LPAC_WITH_PCSC:pcscd \
@@ -36,8 +37,8 @@ endef
 define Package/lpac/description
   lpac is an eUICC eSIM LPA manager written in C. This downstream
   compatibility build uses lpac v2.3.0 with the upstream environment and
-  version fixes plus the MBIM UICC compatibility changes tracked in lpac
-  pull request 438.
+  version fixes, safe network defaults, detailed SM-DS discovery, and selected
+  fixes through lpac pull request 444.
 endef
 
 define Package/lpac/config

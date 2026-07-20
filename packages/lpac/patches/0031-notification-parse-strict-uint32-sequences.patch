@@ -1,0 +1,160 @@
+From: As Tsaqib <0xfiqks@gmail.com>
+Date: Mon, 20 Jul 2026 00:00:00 +0800
+Subject: [PATCH] notification: parse sequence numbers as strict uint32 values
+
+The applets previously accepted signs, whitespace, trailing junk, and values
+larger than uint32_t. On 64-bit hosts an out-of-range value was truncated when
+passed to the eUICC API, potentially operating on a different notification.
+
+Share a decimal-only overflow-checked parser between all three notification
+applets. Keep sequence zero valid and fail explicitly instead of reporting
+success after ignoring an invalid argument.
+---
+ src/applet/notification/dump.c                  | 13 +++++--------
+ src/applet/notification/notification_sequence.c | 30 ++++++++++++++++++++++++++++++
+ src/applet/notification/notification_sequence.h | 10 ++++++++++
+ src/applet/notification/process.c               | 15 +++++----------
+ src/applet/notification/remove.c                | 16 +++++-----------
+ 5 files changed, 55 insertions(+), 29 deletions(-)
+ create mode 100644 src/applet/notification/notification_sequence.c
+ create mode 100644 src/applet/notification/notification_sequence.h
+
+--- a/src/applet/notification/dump.c
++++ b/src/applet/notification/dump.c
+@@ -1,5 +1,6 @@
+ #include "notification_common.h"
+ #include "process.h"
++#include "notification_sequence.h"
+ 
+ #include <euicc/es10b.h>
+ #include <euicc/es10c.h>
+@@ -77,16 +78,12 @@ static int applet_main(const int argc, c
+ 
+     } else {
+         for (int i = optind; i < argc; i++) {
+-            errno = 0;
+-            char *str_end;
+-            const unsigned long seqNumber = strtoul(argv[i], &str_end, 10);
+-            // Although POSIX said user should check errno instead of return value,
+-            // but errno may not be set when no conversion is performed according to C99.
+-            // Check nptr is same as str_end to ensure there is no conversion.
+-            if (argv[i] == str_end || errno != 0) {
+-                continue;
++            uint32_t seqNumber;
++            if (!notification_parse_sequence_number(argv[i], &seqNumber)) {
++                jprint_error("seqNumber", "invalid unsigned 32-bit decimal");
++                return -1;
+             }
+             if (!retrieve_notification(eid, seqNumber)) {
+                 fret = -1;
+                 break;
+             }
+--- /dev/null
++++ b/src/applet/notification/notification_sequence.c
+@@ -0,0 +1,30 @@
++// SPDX-License-Identifier: AGPL-3.0-only
++
++#include "notification_sequence.h"
++
++#include <stdint.h>
++
++bool notification_parse_sequence_number(const char *value, uint32_t *sequence_number) {
++    uint32_t parsed = 0;
++
++    if (value == NULL || value[0] == '\0' || sequence_number == NULL) {
++        return false;
++    }
++
++    for (const unsigned char *p = (const unsigned char *)value; *p != '\0'; p++) {
++        uint32_t digit;
++
++        if (*p < '0' || *p > '9') {
++            return false;
++        }
++
++        digit = (uint32_t)(*p - '0');
++        if (parsed > (UINT32_MAX - digit) / 10U) {
++            return false;
++        }
++        parsed = parsed * 10U + digit;
++    }
++
++    *sequence_number = parsed;
++    return true;
++}
+--- /dev/null
++++ b/src/applet/notification/notification_sequence.h
+@@ -0,0 +1,10 @@
++// SPDX-License-Identifier: AGPL-3.0-only
++
++#pragma once
++
++#include <stdbool.h>
++#include <stdint.h>
++
++// Accept only a non-empty string of ASCII decimal digits in uint32_t range.
++// Sequence number zero is valid.
++bool notification_parse_sequence_number(const char *value, uint32_t *sequence_number);
+--- a/src/applet/notification/process.c
++++ b/src/applet/notification/process.c
+@@ -1,5 +1,6 @@
+ #include "process.h"
+ #include "notification_common.h"
++#include "notification_sequence.h"
+ 
+ #include <euicc/es10b.h>
+ #include <euicc/es9p.h>
+@@ -102,18 +103,12 @@ static int applet_main(int argc, char **
+         }
+     } else {
+         for (int i = optind; i < argc; i++) {
+-            unsigned long seqNumber;
+-
+-            errno = 0;
+-            char *str_end;
+-            seqNumber = strtoul(argv[i], &str_end, 10);
+-            // Although POSIX said user should check errno instead of return value,
+-            // but errno may not be set when no conversion is performed according to C99.
+-            // Check nptr is same as str_end to ensure there is no conversion.
+-            if (argv[i] == str_end || errno != 0) {
+-                continue;
++            uint32_t seqNumber;
++            if (!notification_parse_sequence_number(argv[i], &seqNumber)) {
++                jprint_error("seqNumber", "invalid unsigned 32-bit decimal");
++                return -1;
+             }
+             if (_process_single(seqNumber, autoremove)) {
+                 fret = -1;
+                 break;
+             }
+--- a/src/applet/notification/remove.c
++++ b/src/applet/notification/remove.c
+@@ -1,4 +1,5 @@
+ #include "remove.h"
++#include "notification_sequence.h"
+ 
+ #include <euicc/es10b.h>
+ #include <lpac/utils.h>
+@@ -76,18 +77,11 @@ static int applet_main(int argc, char **
+         }
+     } else {
+         for (int i = optind; i < argc; i++) {
+-            unsigned long seqNumber;
+-
+-            errno = 0;
+-            char *str_end;
+-            seqNumber = strtoul(argv[i], &str_end, 10);
+-            // Although POSIX said user should check errno instead of return value,
+-            // but errno may not be set when no conversion is performed according to C99.
+-            // Check nptr is same as str_end to ensure there is no conversion.
+-            if (argv[i] == str_end || errno != 0) {
+-                continue;
++            uint32_t seqNumber;
++            if (!notification_parse_sequence_number(argv[i], &seqNumber)) {
++                jprint_error("seqNumber", "invalid unsigned 32-bit decimal");
++                return -1;
+             }
+-
+             if (_delete_single(seqNumber)) {
+                 fret = -1;
+                 break;

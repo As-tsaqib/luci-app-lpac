@@ -127,13 +127,13 @@ jobs:
           # Keep both runtime dependencies in the bundled package metadata.
           grep -Fx 'LUCI_DEPENDS:=+luci-base +lpac +ucode-mod-uloop' \
             build-feed/applications/luci-app-lpac/Makefile
-          grep -Fx 'LUCI_EXTRA_DEPENDS:=lpac (>=2.3.0.438-r2)' \
+          grep -Fx 'LUCI_EXTRA_DEPENDS:=lpac (>=2.3.0.444-r1)' \
             build-feed/applications/luci-app-lpac/Makefile
           # The package variable is intentionally matched literally.
           # shellcheck disable=SC2016
-          grep -Fx 'PKG_VERSION:=$(LPAC_UPSTREAM_VERSION).438' \
+          grep -Fx 'PKG_VERSION:=$(LPAC_UPSTREAM_VERSION).444' \
             build-feed/contrib/lpac/Makefile
-          grep -Fx 'PKG_RELEASE:=2' build-feed/contrib/lpac/Makefile
+          grep -Fx 'PKG_RELEASE:=1' build-feed/contrib/lpac/Makefile
 
           source_epoch="$(git log -1 --format=%ct)"
           source_sha="$(git rev-parse --short=12 HEAD)"
@@ -171,11 +171,11 @@ jobs:
 
           case "${PACKAGE_FORMAT}" in
             ipk)
-              lpac_glob="lpac_2.3.0.438-r2_${ARCH}.ipk"
+              lpac_glob="lpac_2.3.0.444-r1_${ARCH}.ipk"
               luci_glob='luci-app-lpac_*.ipk'
               ;;
             apk)
-              lpac_glob='lpac-2.3.0.438-r2.apk'
+              lpac_glob='lpac-2.3.0.444-r1.apk'
               luci_glob='luci-app-lpac-*.apk'
               ;;
           esac
@@ -245,10 +245,10 @@ jobs:
           The default APDU backend for new installations is MBIM.
           The same option is available in Modem > eSIM Manager > Settings.
 
-          Profile Download uses the configured lpac HTTP backend. This bundled
-          lpac 2.3.0 build does not verify TLS peers or hostnames, and LuCI does
-          not provide independent transport verification. Assess this behavior
-          before entering activation or confirmation credentials.
+          Network-facing lpac operations verify the provider certificate chain
+          and hostname against OpenWrt's system CA bundle. Ensure the router
+          clock and CA bundle are valid before downloading or processing a
+          notification; verification failures are not bypassed.
           EOF
 
           (

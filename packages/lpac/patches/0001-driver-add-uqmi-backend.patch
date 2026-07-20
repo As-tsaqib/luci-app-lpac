@@ -17,22 +17,25 @@ Tested-on: Quectel EC25 / Quectel EP06 / Quectel RG520N
 
 Signed-off-by: David Bauer <david.bauer@uniberg.com>
 ---
- driver/CMakeLists.txt |   3 +
+ driver/CMakeLists.txt |   6 ++
  driver/apdu/uqmi.c    | 273 ++++++++++++++++++++++++++++++++++++++++++
  driver/apdu/uqmi.h    |   7 ++
  driver/driver.c       |   6 +
- 4 files changed, 289 insertions(+)
+ 4 files changed, 292 insertions(+)
  create mode 100644 driver/apdu/uqmi.c
  create mode 100644 driver/apdu/uqmi.h
 
 --- a/driver/CMakeLists.txt
 +++ b/driver/CMakeLists.txt
-@@ -62,6 +62,9 @@ if(LPAC_WITH_APDU_AT_WIN32)
+@@ -62,6 +62,12 @@ if(LPAC_WITH_APDU_AT_WIN32)
      )
  endif()
  
-+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLPAC_WITH_APDU_UQMI")
-+target_sources(euicc-drivers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/apdu/uqmi.c)
++option(LPAC_WITH_APDU_UQMI "Build OpenWrt uqmi APDU backend" ON)
++if(LPAC_WITH_APDU_UQMI)
++    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLPAC_WITH_APDU_UQMI")
++    target_sources(euicc-drivers PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/apdu/uqmi.c)
++endif()
 +
  if(LPAC_WITH_APDU_GBINDER)
      set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -DLPAC_WITH_APDU_GBINDER")
