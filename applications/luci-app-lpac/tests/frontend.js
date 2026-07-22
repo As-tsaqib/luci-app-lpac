@@ -610,12 +610,59 @@ const overviewPage = overviewView.render([
 				defaultDpAddress: 'old.smdp.example.com',
 				rootDsAddress: 'lpa.ds.gsma.com'
 			},
-			EUICCInfo2: { extCardResource: {} }
+			EUICCInfo2: {
+				extCardResource: {
+					installedApplication: 13
+				},
+				ts102241Version: '11.1.0',
+				globalplatformVersion: '2.3.1',
+				uiccCapability: [ 'contactless', 'usim' ],
+				rspCapability: [ 'smds', 'download' ],
+				euiccCiPKIdListForVerification: [ 'A1B2', 'C3D4' ],
+				euiccCiPKIdListForSigning: [ 'E5F6' ],
+				euiccCategory: 'removable',
+				forbiddenProfilePolicyRules: [ 'deleteNotAllowed' ],
+				ppVersion: '1.1',
+				sasAcreditationNumber: 'SAS-UP-TEST',
+				certificationDataObject: {
+					platformLabel: 'Test platform',
+					discoveryBaseURL: 'https://discovery.example.com'
+				}
+			}
 		}
 	},
 	{ success: true, data: { global: { apdu_backend: 'mbim' } } }
 ]);
 documentRoot = overviewPage;
+const advancedEuicc = findAll(overviewPage, function(node) {
+	return node.tag === 'details' &&
+		node.attrs?.id === 'lpac-advanced-euicc-information';
+})[0];
+assert.ok(advancedEuicc && advancedEuicc.attrs.open == null,
+	'advanced eUICC information should use a collapsed native details section');
+assert.strictEqual(findAll(advancedEuicc, function(node) {
+	return node.tag === 'summary' &&
+		textContent(node) === 'Advanced eUICC information';
+}).length, 1, 'the folded section should have a clear semantic summary');
+const advancedEuiccText = textContent(advancedEuicc);
+[
+	'Installed application count13',
+	'ETSI TS 102 241 version11.1.0',
+	'GlobalPlatform version2.3.1',
+	'UICC capabilitiescontactless, usim',
+	'RSP capabilitiessmds, download',
+	'CI public key IDs for verificationA1B2, C3D4',
+	'CI public key IDs for signingE5F6',
+	'eUICC categoryremovable',
+	'Forbidden Profile Policy RulesdeleteNotAllowed',
+	'Protection Profile version1.1',
+	'SAS accreditation numberSAS-UP-TEST',
+	'Platform labelTest platform',
+	'Discovery Base URLhttps://discovery.example.com'
+].forEach(function(fragment) {
+	assert.ok(advancedEuiccText.includes(fragment),
+		`advanced chip information should render ${fragment}`);
+});
 const defaultSmdpEdit = document.getElementById('lpac-default-smdp-edit');
 assert.ok(defaultSmdpEdit, 'Overview should expose the persistent default SM-DP+ editor');
 defaultSmdpEdit.attrs.click();

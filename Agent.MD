@@ -51,6 +51,9 @@ provider-response bounds remain deferred.
   starting a discovered profile's protected preview session.
 - Accept only signature-matched PNG/JPEG profile icons up to 1024 decoded bytes
   and revalidate them in the browser before constructing fixed image data URLs.
+- Keep everyday chip details concise while exposing the already-normalized
+  EUICCInfo2 capability and certification fields in a collapsed semantic
+  `Advanced eUICC information` section.
 - Enumerate AT ports and PC/SC readers through fixed native lpac argv without
   opening an eUICC channel; validate every returned path, index, and label.
 - Require every download path to enter one live lpac preview session and receive

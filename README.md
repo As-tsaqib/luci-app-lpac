@@ -20,7 +20,8 @@ architecture, locking model, supported operations, and security boundaries.
 
 ## Current scope
 
-- Read eUICC information and compiled lpac drivers.
+- Read eUICC information and compiled lpac drivers, with technical capability
+  and certification metadata kept in a collapsed advanced section.
 - Change the persistent default SM-DP+ address with explicit confirmation and
   eUICC readback.
 - List, enable, disable, rename, and delete profiles.

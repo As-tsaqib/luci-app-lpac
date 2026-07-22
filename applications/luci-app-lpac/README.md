@@ -8,7 +8,9 @@ wrapper.
 
 ## Scope
 
-- Show the installed lpac version, compiled drivers, and eUICC information.
+- Show the installed lpac version, compiled drivers, essential eUICC details,
+  and a collapsed advanced section for normalized capability and certification
+  metadata.
 - Change the persistent default SM-DP+ address with explicit confirmation and
   exact eUICC readback.
 - List, enable, disable, rename, and delete profiles. Embedded profile PNG/JPEG

@@ -26,6 +26,18 @@ function formatBytes(value) {
 		: _('Unknown');
 }
 
+function formatList(values) {
+	return Array.isArray(values) && values.length
+		? values.join(', ')
+		: null;
+}
+
+function formatCount(value) {
+	return value != null && value !== '' && Number.isFinite(+value)
+		? String(value)
+		: null;
+}
+
 function detailsTable(fields) {
 	const table = E('table', { 'class': 'table' });
 
@@ -37,6 +49,42 @@ function detailsTable(fields) {
 	}
 
 	return table;
+}
+
+function advancedEuiccInformation(info2, resources) {
+	const certification = info2.certificationDataObject || {};
+	const sasAccreditation = info2.sasAccreditationNumber ||
+		info2.sasAcreditationNumber;
+
+	return E('details', {
+		'id': 'lpac-advanced-euicc-information',
+		'class': 'cbi-section'
+	}, [
+		E('summary', { 'style': 'cursor:pointer' }, [
+			E('strong', {}, [ _('Advanced eUICC information') ])
+		]),
+		E('p', { 'class': 'cbi-section-descr' }, [
+			_('Technical capability and certification metadata used mainly for compatibility diagnostics, certification, and development.')
+		]),
+		detailsTable([
+			_('Installed application count'), formatCount(resources.installedApplication),
+			_('ETSI TS 102 241 version'), info2.ts102241Version,
+			_('GlobalPlatform version'), info2.globalplatformVersion,
+			_('UICC capabilities'), formatList(info2.uiccCapability),
+			_('RSP capabilities'), formatList(info2.rspCapability),
+			_('CI public key IDs for verification'),
+				formatList(info2.euiccCiPKIdListForVerification),
+			_('CI public key IDs for signing'),
+				formatList(info2.euiccCiPKIdListForSigning),
+			_('eUICC category'), info2.euiccCategory,
+			_('Forbidden Profile Policy Rules'),
+				formatList(info2.forbiddenProfilePolicyRules),
+			_('Protection Profile version'), info2.ppVersion,
+			_('SAS accreditation number'), sasAccreditation,
+			_('Platform label'), certification.platformLabel,
+			_('Discovery Base URL'), certification.discoveryBaseURL
+		])
+	]);
 }
 
 return view.extend({
@@ -323,7 +371,7 @@ return view.extend({
 					_('Free non-volatile memory'), formatBytes(resources.freeNonVolatileMemory),
 					_('Free volatile memory'), formatBytes(resources.freeVolatileMemory)
 				])
-			]));
+			]), advancedEuiccInformation(info2, resources));
 		}
 
 		nodes.push(E('div', { 'class': 'cbi-page-actions' }, [

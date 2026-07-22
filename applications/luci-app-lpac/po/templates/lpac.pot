@@ -19,7 +19,7 @@ msgid ""
 "R applet."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:124
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:172
 msgid ""
 "A manual profile download with an empty SM-DP+ server field uses this "
 "default address. Clearing the eUICC default is not supported by this form."
@@ -64,6 +64,10 @@ msgstr ""
 msgid "Additional parameters"
 msgstr ""
 
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:64
+msgid "Advanced eUICC information"
+msgstr ""
+
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:282
 msgid "An ICCID is required to rename this profile"
 msgstr ""
@@ -87,20 +91,28 @@ msgstr ""
 msgid "Authorizing profile installation…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:285
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:333
 msgid "Available APDU backends"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:286
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:334
 msgid "Available HTTP backends"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:182
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:230
 msgid "Back"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:281
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:329
 msgid "Backend status"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:77
+msgid "CI public key IDs for signing"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:75
+msgid "CI public key IDs for verification"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:964
@@ -108,7 +120,7 @@ msgstr ""
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:266
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:375
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:397
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:130
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:178
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:154
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:197
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:228
@@ -123,11 +135,11 @@ msgstr ""
 msgid "Cancelling the profile download session…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:66
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:114
 msgid "Change"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:106
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:154
 msgid "Change default SM-DP+ address"
 msgstr ""
 
@@ -151,7 +163,7 @@ msgstr ""
 msgid "Clear"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:166
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:214
 msgid "Confirm persistent SM-DP+ change"
 msgstr ""
 
@@ -164,7 +176,7 @@ msgstr ""
 msgid "Confirmation code is too long or contains control characters."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:175
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:223
 msgid ""
 "Confirming writes persistent eUICC state and changes which server manual "
 "downloads use when no SM-DP+ address is supplied."
@@ -195,8 +207,8 @@ msgstr ""
 msgid "Control device"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:108
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:171
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:156
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:219
 msgid "Current address"
 msgstr ""
 
@@ -220,7 +232,7 @@ msgstr ""
 msgid "Decoding QR code…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:320
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:368
 msgid "Default SM-DP+ address"
 msgstr ""
 
@@ -313,6 +325,10 @@ msgstr ""
 msgid "Discovered download orders"
 msgstr ""
 
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:85
+msgid "Discovery Base URL"
+msgstr ""
+
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:152
 msgid ""
 "Do not close this page or retry a notification whose provider outcome is "
@@ -337,8 +353,12 @@ msgid ""
 "offered without verification."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:316
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:364
 msgid "EID"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:71
+msgid "ETSI TS 102 241 version"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:16
@@ -363,7 +383,7 @@ msgstr ""
 msgid "Enabling profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:157
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:205
 msgid "Enter a different address before continuing."
 msgstr ""
 
@@ -371,7 +391,7 @@ msgstr ""
 msgid "Enter a valid LPA:1$… activation code."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:155
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:203
 msgid ""
 "Enter a valid SM-DP+ host or bracketed IPv6 address with an optional port."
 msgstr ""
@@ -383,7 +403,7 @@ msgid ""
 "pauses for provider-metadata review before installation."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:317
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:365
 msgid "Firmware version"
 msgstr ""
 
@@ -391,16 +411,24 @@ msgstr ""
 msgid "First available reader"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:323
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:80
+msgid "Forbidden Profile Policy Rules"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:371
 msgid "Free non-volatile memory"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:324
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:372
 msgid "Free volatile memory"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:290
 msgid "General"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:72
+msgid "GlobalPlatform version"
 msgstr ""
 
 #: applications/luci-app-lpac/root/usr/share/rpcd/acl.d/luci-app-lpac.json:3
@@ -457,6 +485,10 @@ msgstr ""
 msgid "Install without metadata"
 msgstr ""
 
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:70
+msgid "Installed application count"
+msgstr ""
+
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:472
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:475
 msgid "Invalid notification sequence"
@@ -480,7 +512,7 @@ msgstr ""
 msgid "MBIM backend"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:278
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:326
 msgid ""
 "Manage the eUICC through the official OpenWrt lpac package. Modem and "
 "network lifecycle operations remain outside this application."
@@ -503,8 +535,8 @@ msgstr ""
 msgid "Modem"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:117
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:172
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:165
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:220
 msgid "New address"
 msgstr ""
 
@@ -538,7 +570,7 @@ msgstr ""
 msgid "No response from the lpac service."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:250
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:298
 msgid ""
 "No successful change is being claimed; refresh and review the current value "
 "before retrying."
@@ -626,6 +658,10 @@ msgstr ""
 msgid "Permanently delete profile “%s”? This action cannot be undone."
 msgstr ""
 
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:84
+msgid "Platform label"
+msgstr ""
+
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:275
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:491
 msgid "Process"
@@ -698,7 +734,7 @@ msgid ""
 "the provider."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:318
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:366
 msgid "Profile specification"
 msgstr ""
 
@@ -710,6 +746,10 @@ msgstr ""
 msgid ""
 "Profiles are read directly from the eUICC using the configured lpac APDU "
 "backend."
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:82
+msgid "Protection Profile version"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1499
@@ -736,7 +776,11 @@ msgstr ""
 msgid "QR image"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:247
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:74
+msgid "RSP capabilities"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:295
 msgid "Read back:"
 msgstr ""
 
@@ -749,7 +793,7 @@ msgid "Reader interface"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:585
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:335
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:383
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:329
 msgid "Refresh"
 msgstr ""
@@ -849,7 +893,7 @@ msgstr ""
 msgid "Request an eUICC refresh"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:246
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:294
 msgid "Requested:"
 msgstr ""
 
@@ -870,7 +914,7 @@ msgstr ""
 msgid "Retrieve profile preview"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:136
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:184
 msgid "Review change"
 msgstr ""
 
@@ -883,8 +927,12 @@ msgstr ""
 msgid "Review eSIM profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:322
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:370
 msgid "Root SM-DS address"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:83
+msgid "SAS accreditation number"
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1466
@@ -914,7 +962,7 @@ msgid ""
 "provider metadata before installation."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:319
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:367
 msgid "SVN version"
 msgstr ""
 
@@ -960,7 +1008,7 @@ msgstr ""
 msgid "Select notification %s"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:284
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:332
 msgid "Selected APDU backend"
 msgstr ""
 
@@ -986,7 +1034,7 @@ msgstr ""
 msgid "Serial device"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:188
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:236
 msgid "Set persistent address"
 msgstr ""
 
@@ -994,7 +1042,7 @@ msgstr ""
 msgid "Set profile nickname"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:168
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:216
 msgid "Set the eUICC default SM-DP+ address to the new value below?"
 msgstr ""
 
@@ -1017,6 +1065,12 @@ msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1442
 msgid "Take QR photo"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:67
+msgid ""
+"Technical capability and certification metadata used mainly for "
+"compatibility diagnostics, certification, and development."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/settings.js:329
@@ -1067,15 +1121,15 @@ msgstr ""
 msgid "The custom ISD-R AID must contain exactly 32 hexadecimal characters."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:153
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:201
 msgid "The default SM-DP+ address cannot be empty."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:212
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:260
 msgid "The default SM-DP+ address was not confirmed as changed."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:240
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:288
 msgid "The default SM-DP+ address was updated and verified by eUICC readback."
 msgstr ""
 
@@ -1263,13 +1317,13 @@ msgstr ""
 msgid "The start response was lost. Checking whether lpac is still running…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:257
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:305
 msgid ""
 "The update or its readback could not be completed. Its outcome is not being "
 "claimed; refresh eUICC information before retrying."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:211
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:259
 msgid ""
 "The update outcome could not be confirmed. Refresh eUICC information before "
 "retrying."
@@ -1289,7 +1343,7 @@ msgstr ""
 msgid "This browser tab is not authorized to approve the profile preview."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:121
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:169
 msgid ""
 "This changes persistent state on the eUICC, not a LuCI setting. The address "
 "remains configured after a router reboot."
@@ -1305,30 +1359,34 @@ msgstr ""
 msgid "Try the ISD-P AID if this eUICC rejects an operation by ICCID."
 msgstr ""
 
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:73
+msgid "UICC capabilities"
+msgstr ""
+
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/download.js:1414
 msgid ""
 "Unable to confirm whether a profile download is already running. Retrying "
 "automatically…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:301
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:349
 msgid "Unable to read eUICC information"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:295
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:343
 msgid "Unable to read lpac drivers"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:298
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:346
 msgid "Unable to read lpac settings"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:292
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:340
 msgid "Unable to read lpac version"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:249
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:269
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:297
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:317
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:277
 msgid "Unavailable"
 msgstr ""
@@ -1344,7 +1402,7 @@ msgstr ""
 msgid "Unknown profile"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:199
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:247
 msgid "Updating default SM-DP+ address"
 msgstr ""
 
@@ -1381,12 +1439,12 @@ msgid "Wait for the selected QR image to finish decoding."
 msgstr ""
 
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/notifications.js:405
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:200
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:248
 #: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/profiles.js:73
 msgid "Waiting for lpac…"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:276
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:324
 #: applications/luci-app-lpac/root/usr/share/luci/menu.d/luci-app-lpac.json:12
 msgid "eSIM Manager"
 msgstr ""
@@ -1395,7 +1453,11 @@ msgstr ""
 msgid "eSIM profiles"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:314
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:79
+msgid "eUICC category"
+msgstr ""
+
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:362
 msgid "eUICC information"
 msgstr ""
 
@@ -1403,13 +1465,13 @@ msgstr ""
 msgid "eUICC notifications"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:245
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:293
 msgid ""
 "lpac accepted the update, but eUICC readback did not match the requested "
 "address."
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:224
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:272
 msgid ""
 "lpac accepted the update, but the eUICC readback failed. Do not assume the "
 "displayed address is current; refresh before retrying."
@@ -1486,7 +1548,7 @@ msgstr ""
 msgid "lpac settings"
 msgstr ""
 
-#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:283
+#: applications/luci-app-lpac/htdocs/luci-static/resources/view/lpac/overview.js:331
 msgid "lpac version"
 msgstr ""
 
