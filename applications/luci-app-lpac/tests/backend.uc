@@ -373,9 +373,47 @@ global.TEST_EXEC_REPLY = {
 result = invoke('list_profiles');
 check(result.success && length(result.data) == 2,
 	'invalid profile records are discarded');
-check(!('icon' in result.data[0]) && !('iconType' in result.data[0]) &&
-	!('icon' in result.data[1]) && !('iconType' in result.data[1]),
-	'profile icon content and metadata are never returned to LuCI');
+check(result.data[0].iconType == 'png' && result.data[0].icon == png_icon_data &&
+	result.data[1].iconType == 'jpeg' && result.data[1].icon == jpeg_icon_data,
+	'bounded PNG and JPEG profile icons are normalized for LuCI');
+
+let oversized_icon = chr(137, 80, 78, 71, 13, 10, 26, 10);
+for (let i = 8; i < 1025; i++)
+	oversized_icon += chr(0);
+
+reset();
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: terminal([
+		{
+			iccid: '8912345678901234569',
+			iconType: 'svg',
+			icon: b64enc('<svg/>')
+		},
+		{
+			iccid: '8912345678901234570',
+			iconType: 'png',
+			icon: jpeg_icon_data
+		},
+		{
+			iccid: '8912345678901234571',
+			iconType: 'png',
+			icon: png_icon_data + '\n'
+		},
+		{
+			iccid: '8912345678901234572',
+			iconType: 'png',
+			icon: b64enc(oversized_icon)
+		}
+	])
+};
+result = invoke('list_profiles');
+let invalid_icons_removed = result.success && length(result.data) == 4;
+for (let profile in result.data)
+	invalid_icons_removed = invalid_icons_removed &&
+		profile.iconType === null && profile.icon === null;
+check(invalid_icons_removed,
+	'invalid, mismatched, control-suffixed, and oversized profile icons are removed');
 
 reset();
 global.TEST_EXEC_REPLY = {

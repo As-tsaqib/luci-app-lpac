@@ -24,6 +24,8 @@ architecture, locking model, supported operations, and security boundaries.
 - Change the persistent default SM-DP+ address with explicit confirmation and
   eUICC readback.
 - List, enable, disable, rename, and delete profiles.
+- Display bounded embedded PNG/JPEG profile icons, with a theme-aware SIM-card
+  fallback when the profile supplies no usable icon.
 - Download profiles from a complete LPA activation code, a QR image decoded
   locally in the browser, or manual parameters, with an explicit provider
   metadata decision before installation.
@@ -32,11 +34,11 @@ architecture, locking model, supported operations, and security boundaries.
 - Configure validated official AT, uqmi, MBIM, and PC/SC settings.
 - Serialize LuCI eUICC operations through a root-owned runtime lock.
 
-SM-DS discovery, direct discovered-order download, profile icons, modem resets,
-network-interface control, destructive eUICC purge, and raw notification
-dump/replay remain intentionally out of scope for this staged branch. LuCI
-relies on the matching packaged lpac transport, whose v2.3.0 curl backend does
-not verify provider certificate chains or hostnames.
+SM-DS discovery, direct discovered-order download, download-preview icons,
+modem resets, network-interface control, destructive eUICC purge, and raw
+notification dump/replay remain intentionally out of scope for this staged
+branch. LuCI relies on the matching packaged lpac transport, whose v2.3.0 curl
+backend does not verify provider certificate chains or hostnames.
 
 ## Compatibility
 

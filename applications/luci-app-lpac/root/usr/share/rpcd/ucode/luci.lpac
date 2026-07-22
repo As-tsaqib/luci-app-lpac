@@ -536,6 +536,42 @@ function constant_time_equal(left, right) {
 	return difference == 0;
 }
 
+function normalize_profile_icon(icon_type, icon) {
+	if (type(icon_type) != 'string' || type(icon) != 'string')
+		return null;
+
+	icon_type = lc(icon_type);
+	if (icon_type == 'jpg')
+		icon_type = 'jpeg';
+
+	if (icon_type != 'png' && icon_type != 'jpeg')
+		return null;
+
+	/* SGP.22 limits profile icons to 1024 decoded bytes. */
+	if (length(icon) < 4 || length(icon) > 1368 || length(icon) % 4 != 0 ||
+	    match(icon, /^[A-Za-z0-9+\/]+={0,2}$/) === null)
+		return null;
+
+	let decoded_length = length(icon) / 4 * 3;
+	if (substr(icon, length(icon) - 2, 2) == '==')
+		decoded_length -= 2;
+	else if (substr(icon, length(icon) - 1, 1) == '=')
+		decoded_length--;
+
+	if (decoded_length > 1024)
+		return null;
+
+	/* Accept only the advertised raster type, never an active image format. */
+	if ((icon_type == 'png' && substr(icon, 0, 11) != 'iVBORw0KGgo') ||
+	    (icon_type == 'jpeg' && substr(icon, 0, 4) != '/9j/'))
+		return null;
+
+	return {
+		type: icon_type,
+		data: icon
+	};
+}
+
 function normalize_profiles(data) {
 	const profiles = [];
 
@@ -549,6 +585,7 @@ function normalize_profiles(data) {
 		const iccid = valid_iccid(profile.iccid) ? profile.iccid : null;
 		const aid = valid_aid(profile.isdpAid)
 			? uc(profile.isdpAid) : null;
+		const profile_icon = normalize_profile_icon(profile.iconType, profile.icon);
 
 		if (iccid === null && aid === null)
 			continue;
@@ -560,7 +597,9 @@ function normalize_profiles(data) {
 			profileNickname: safe_text(profile.profileNickname, 64),
 			serviceProviderName: safe_text(profile.serviceProviderName, 128),
 			profileName: safe_text(profile.profileName, 128),
-			profileClass: safe_text(profile.profileClass, 32)
+			profileClass: safe_text(profile.profileClass, 32),
+			iconType: profile_icon ? profile_icon.type : null,
+			icon: profile_icon ? profile_icon.data : null
 		});
 
 		if (length(profiles) >= 128)

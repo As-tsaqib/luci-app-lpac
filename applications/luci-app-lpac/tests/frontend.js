@@ -4,6 +4,7 @@
 'use strict';
 
 const assert = require('assert');
+const Buffer = require('buffer').Buffer;
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -218,7 +219,12 @@ global.document = {
 		}
 	}
 };
-global.window = { location: { reload: function() {} } };
+global.window = {
+	location: { reload: function() {} },
+	atob: function(value) {
+		return Buffer.from(value, 'base64').toString('latin1');
+	}
+};
 
 const view = { extend: function(spec) { return spec; } };
 const ui = {
@@ -369,6 +375,10 @@ assert.strictEqual(findAll(profilesPage, function(node) {
 	return node.tag === 'link' && node.attrs?.rel === 'stylesheet' &&
 		node.attrs?.href === '/luci-static/resources/view/lpac/profiles.css';
 }).length, 1, 'the profile view should load its scoped responsive stylesheet');
+assert.strictEqual(findAll(profilesPage, function(node) {
+	return node.tag === 'span' &&
+		node.attrs?.class === 'lpac-profile-icon lpac-profile-icon-fallback';
+}).length, 1, 'a profile without icon metadata should use the neutral SIM-card fallback');
 assert.deepStrictEqual(findAll(profilesPage, function(node) {
 	return node.attrs?.class === 'lpac-profile-key';
 }).map(textContent), [ 'Profile:', 'Provider:', 'ICCID:', 'State:' ],
@@ -400,6 +410,40 @@ assert.strictEqual(findAll(profilesPage, function(node) {
 	return node.tag === 'span' && node.attrs?.class === 'label' &&
 		textContent(node) === 'Disabled';
 }).length, 1, 'a disabled profile should use the neutral state badge');
+
+const profilePng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+const iconProfilesPage = profilesView.render({
+	success: true,
+	data: [ Object.assign({}, profile, { iconType: 'png', icon: profilePng }) ]
+});
+const profileImages = findAll(iconProfilesPage, function(node) {
+	return node.tag === 'img' && node.attrs?.class === 'lpac-profile-icon';
+});
+assert.strictEqual(profileImages.length, 1,
+	'a validated profile icon should render once beside the profile name');
+assert.strictEqual(profileImages[0].attrs.src, `data:image/png;base64,${profilePng}`,
+	'the validated icon should use a fixed PNG data URL');
+assert.strictEqual(profileImages[0].attrs.alt, '',
+	'the adjacent profile name should remain the accessible label');
+assert.strictEqual(typeof profileImages[0].attrs.error, 'function',
+	'a browser image-decoding failure should retain a fallback path');
+assert.strictEqual(findAll(iconProfilesPage, function(node) {
+	return String(node.attrs?.class || '').includes('lpac-profile-icon-fallback');
+}).length, 0, 'a valid profile icon should replace the generic SIM-card fallback');
+
+const unsafeIconPage = profilesView.render({
+	success: true,
+	data: [ Object.assign({}, profile, {
+		iconType: 'svg',
+		icon: Buffer.from('<svg/>').toString('base64')
+	}) ]
+});
+assert.strictEqual(findAll(unsafeIconPage, function(node) {
+	return node.tag === 'img';
+}).length, 0, 'an unsupported active image type must never reach an img element');
+assert.strictEqual(findAll(unsafeIconPage, function(node) {
+	return String(node.attrs?.class || '').includes('lpac-profile-icon-fallback');
+}).length, 1, 'an unsupported image type should use the SIM-card fallback');
 
 const enabledProfile = Object.assign({}, profile, {
 	iccid: '8912345678901234568',
@@ -635,11 +679,16 @@ assert.strictEqual(menu['admin/network/lpac'].title, undefined,
 
 const profileCss = fs.readFileSync(path.join(appRoot,
 	'htdocs/luci-static/resources/view/lpac/profiles.css'), 'utf8');
-assert.ok(!profileCss.includes('lpac-profile-icon') &&
-	findAll(profilesPage, function(node) {
-		return String(node.attrs?.class || '').includes('lpac-profile-icon');
-	}).length === 0,
-	'profile icon UI and styles should remain absent from the staged branch');
+assert.ok(profileCss.includes('.lpac-profile-icon') &&
+	profileCss.includes('.lpac-profile-icon-fallback::before') &&
+	profileCss.includes('.lpac-profile-icon-fallback::after'),
+	'profile icons should include a scoped SIM-card fallback');
+assert.match(profileCss,
+	/clip-path:\s*polygon\(22% 0, 100% 0, 100% 100%, 0 100%, 0 28%\)/,
+	'the fallback card should retain its approved upper-left cut');
+assert.match(profileCss,
+	/\.lpac-profile-icon-fallback::after\s*\{[^}]*left:\s*39%;/s,
+	'the fallback contact pad should remain offset toward the right');
 assert.ok(profileCss.includes('#lpac-profile-table,\n\t#lpac-profile-table > tbody {\n\t\tdisplay: block;'),
 	'the responsive layout should not depend on a theme table display mode');
 assert.ok(profileCss.includes('#lpac-profile-table .tr.table-titles {\n\t\tdisplay: none;'),
@@ -1184,7 +1233,7 @@ async function testDownloadView() {
 		});
 	assert.strictEqual(findAll(modal.content, function(node) {
 		return node.tag === 'img';
-	}).length, 0, 'the profile preview must remain icon-free on this staged branch');
+	}).length, 0, 'the bounded profile-download preview should remain icon-free');
 	const installButton = byText(modal.content, 'button', 'Install profile')[0];
 	assert.ok(installButton, 'metadata review should require an explicit Install profile action');
 	await installButton.attrs.click();

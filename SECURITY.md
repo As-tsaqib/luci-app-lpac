@@ -59,7 +59,13 @@ Local Remove never contacts the provider. SM-DS discovery remains unavailable.
 Changing the default SM-DP+ address writes persistent eUICC state. The UI uses
 a typed fixed-argv RPC, requires an old/new confirmation, and claims success
 only after a fresh `chip info` response exactly matches the requested address.
-Profile icons are neither returned by the backend nor rendered by the browser.
+Installed-profile icons never trigger an external request. The backend accepts
+only well-formed Base64 advertised as PNG or JPEG, enforces the SGP.22 1024-byte
+decoded limit, checks the matching raster signature, and drops every other icon
+type. The browser repeats the type, size, Base64, and signature checks before
+constructing a fixed `data:image/png` or `data:image/jpeg` URL; decode failures
+fall back to a CSS-only SIM-card shape. Icons in download-preview metadata
+remain discarded.
 
 The application does not manage modem, SIM-power, or network-interface
 lifecycle. Profile changes can interrupt mobile connectivity.

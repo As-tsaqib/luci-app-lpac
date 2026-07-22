@@ -11,7 +11,9 @@ wrapper.
 - Show the installed lpac version, compiled drivers, and eUICC information.
 - Change the persistent default SM-DP+ address with explicit confirmation and
   exact eUICC readback.
-- List, enable, disable, rename, and delete profiles.
+- List, enable, disable, rename, and delete profiles. Embedded profile PNG/JPEG
+  icons are displayed when valid; otherwise the list uses a CSS-only SIM-card
+  fallback without contacting an external icon service.
 - Download a profile with a complete LPA activation code, a locally decoded QR
   image, or the non-interactive manual parameters supported by upstream lpac;
   every path pauses for provider-metadata review before installation.
@@ -69,8 +71,9 @@ failure are reported separately. The standalone Remove action never contacts
 the provider. The bundled notification patches support sequence `0` and reject
 non-canonical or overflowing uint32 arguments.
 
-SM-DS discovery, direct discovered-order download, and profile icons are
-deferred from this staged branch.
+SM-DS discovery, direct discovered-order download, and icons in the
+pre-install download preview are deferred from this staged branch. Installed
+profile icons are read only from the eUICC profile metadata.
 
 lpac 2.3.0 may report `v0.0.0-unknown` because its generated version header
 collides with an applet header and release tarballs lack Git metadata. This is
@@ -121,8 +124,11 @@ The output watcher reconstructs fragmented NDJSON, bounds total bytes, line
 length, and line count, and recognizes only the metadata, preview, protected
 post-gate phases, and terminal result needed to verify the session. Preview
 metadata is allowlisted to ICCID, profile/provider name, and profile class;
-profile icons and unknown fields are discarded. Malformed, truncated,
-oversized, duplicated, or out-of-order protocol data fails closed.
+download-preview icons and unknown fields are discarded. Malformed, truncated,
+oversized, duplicated, or out-of-order protocol data fails closed. The separate
+installed-profile list accepts only bounded Base64 PNG/JPEG data with a matching
+file signature, and the browser repeats those checks before constructing a
+fixed-type data URL.
 
 OpenWrt configures rpcd command execution with a 30-second timeout. The
 one-shot RPC methods retain that limit. Profile download uses a ten-minute

@@ -39,6 +39,50 @@ function profileField(label, value) {
 	]);
 }
 
+function profileIconFallback() {
+	return E('span', {
+		'class': 'lpac-profile-icon lpac-profile-icon-fallback',
+		'aria-hidden': 'true'
+	}, []);
+}
+
+function profileIcon(profile) {
+	const type = String(profile.iconType || '').toLowerCase();
+	const icon = profile.icon;
+
+	if ((type !== 'png' && type !== 'jpeg') || typeof icon !== 'string' ||
+	    icon.length < 4 || icon.length > 1368 || icon.length % 4 !== 0 ||
+	    !/^[A-Za-z0-9+/]+={0,2}$/.test(icon))
+		return profileIconFallback();
+
+	try {
+		const decoded = window.atob(icon);
+		const png = decoded.length >= 8 &&
+			decoded.charCodeAt(0) === 0x89 && decoded.slice(1, 4) === 'PNG' &&
+			decoded.charCodeAt(4) === 0x0d && decoded.charCodeAt(5) === 0x0a &&
+			decoded.charCodeAt(6) === 0x1a && decoded.charCodeAt(7) === 0x0a;
+		const jpeg = decoded.length >= 3 && decoded.charCodeAt(0) === 0xff &&
+			decoded.charCodeAt(1) === 0xd8 && decoded.charCodeAt(2) === 0xff;
+
+		if (!decoded.length || decoded.length > 1024 ||
+		    (type === 'png' && !png) || (type === 'jpeg' && !jpeg))
+			return profileIconFallback();
+	}
+	catch (error) {
+		return profileIconFallback();
+	}
+
+	return E('img', {
+		'class': 'lpac-profile-icon',
+		'src': 'data:image/' + type + ';base64,' + icon,
+		'alt': '',
+		'aria-hidden': 'true',
+		'error': function() {
+			this.replaceWith(profileIconFallback());
+		}
+	});
+}
+
 return view.extend({
 	load: function() {
 		return L.resolveDefault(lpac.listProfiles(), null);
@@ -238,6 +282,10 @@ return view.extend({
 				const enabled = state === 'enabled';
 				const disabled = state === 'disabled';
 				const id = profile.iccid || profile.isdpAid;
+				const summary = E('span', { 'class': 'lpac-profile-summary' }, [
+					profileIcon(profile),
+					profileField(_('Profile'), name)
+				]);
 				const actions = E('div', { 'class': 'lpac-profile-actions' }, [
 					E('button', {
 						'class': 'btn cbi-button-action',
@@ -264,7 +312,7 @@ return view.extend({
 				]);
 
 				rows.push([
-					[ name, profileField(_('Profile'), name) ],
+					[ name, summary ],
 					[ provider, profileField(_('Provider'), provider) ],
 					[ iccid, profileField(_('ICCID'), iccid) ],
 					[ state, profileField(_('State'), profileStateIndicator(state)) ],

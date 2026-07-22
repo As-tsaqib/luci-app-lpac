@@ -63,8 +63,10 @@ template is reproducible. The SDK workflow must build only `luci-app-lpac`.
   provider outcome or a record delivered before local removal failed.
 - Treat the default SM-DP+ address as persistent eUICC state: require explicit
   old/new confirmation and fresh exact readback before reporting success.
-- Keep SM-DS discovery, direct discovered-order download, and profile icons out
-  of this staged branch until their deferred patches and tests are reintroduced.
+- Keep SM-DS discovery, direct discovered-order download, and download-preview
+  icons out of this staged branch until their deferred patches and tests are
+  reintroduced. Installed-profile icons must remain bounded to signature-
+  checked PNG/JPEG data with a local CSS fallback and no external icon lookup.
 - Preserve the license and source provenance of third-party frontend assets.
 - Preserve granular read/write rpcd ACLs.
 - Add tests for every backend validation or normalization change.
