@@ -94,6 +94,17 @@ export function glob(pattern) {
 	return type(result) == 'array' ? result : [];
 };
 
+export function readlink(path) {
+	push(global.TEST_READLINK_CALLS, path);
+
+	if (global.TEST_READLINK_THROW || global.TEST_READLINK_THROW_PATH === path)
+		die('readlink failed');
+
+	const result = global.TEST_READLINK_RESULTS?.[path];
+
+	return type(result) == 'string' ? result : null;
+};
+
 export function lstat(path) {
 	global.TEST_LSTAT_PATH = path;
 

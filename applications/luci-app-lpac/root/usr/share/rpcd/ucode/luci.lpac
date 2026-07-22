@@ -423,16 +423,7 @@ function valid_uqmi_device(value) {
 	return type(value) == 'string' && length(value) >= 13 &&
 		length(value) <= 128 &&
 		match(value, /[[:cntrl:][:space:]]/) === null &&
-		match(value, /^\/dev\/cdc-wdm[0-9]+$/) !== null;
-}
-
-function valid_pcsc_interface(value) {
-	if (value === '')
-		return true;
-
-	const canonical = canonical_uint32(value);
-
-	return canonical !== null && int(canonical) <= 1024;
+		match(value, /^\/dev\/(cdc-wdm[0-9]+|wwan[0-9]+qmi[0-9]+)$/) !== null;
 }
 
 function normalize_info(data) {
@@ -896,19 +887,16 @@ function normalize_drivers(record) {
 
 	return success({
 		apdu: normalize_driver_list(record.payload.LPAC_APDU,
-			[ 'uqmi', 'mbim', 'at', 'pcsc' ]),
+			[ 'uqmi', 'mbim', 'at' ]),
 		http: normalize_driver_list(record.payload.LPAC_HTTP, [ 'curl' ])
 	});
 }
 
 function normalize_apdu_devices(record, backend) {
 	const payload = record?.payload;
-	const expected_env = backend == 'at'
-		? 'LPAC_APDU_AT_DEVICE'
-		: 'LPAC_APDU_PCSC_DRV_IFID';
 
-	if ((backend != 'at' && backend != 'pcsc') || type(payload) != 'object' ||
-	    payload.env != expected_env || type(payload.data) != 'array' ||
+	if (backend != 'at' || type(payload) != 'object' ||
+	    payload.env != 'LPAC_APDU_AT_DEVICE' || type(payload.data) != 'array' ||
 	    length(payload.data) > 64)
 		return failure('invalid_response',
 			'lpac did not return a valid APDU device list.');
@@ -923,16 +911,8 @@ function normalize_apdu_devices(record, backend) {
 		const name = safe_text(item.name, 255);
 		let value = null;
 
-		if (backend == 'at') {
-			if (valid_device_path(item.env))
-				value = item.env;
-		}
-		else {
-			const index_value = canonical_uint32(item.env);
-
-			if (index_value !== null && int(index_value) <= 1024)
-				value = index_value;
-		}
+		if (valid_device_path(item.env))
+			value = item.env;
 
 		if (value === null || name === null || !length(name) || seen[value])
 			continue;
@@ -942,37 +922,121 @@ function normalize_apdu_devices(record, backend) {
 	}
 
 	/* OpenWrt often has no /dev/serial/by-id; supplement lpac's AT list. */
-	if (backend == 'at') {
-		for (let pattern in [ '/dev/ttyUSB*', '/dev/ttyACM*', '/dev/wwan*at*' ]) {
+	for (let pattern in [ '/dev/ttyUSB*', '/dev/ttyACM*', '/dev/wwan*at*' ]) {
+		if (length(devices) >= 64)
+			break;
+
+		let paths = [];
+
+		try {
+			paths = fs.glob(pattern);
+		}
+		catch (e) {
+			paths = [];
+		}
+
+		if (type(paths) != 'array')
+			continue;
+
+		for (let path in paths) {
 			if (length(devices) >= 64)
 				break;
 
-			let paths = [];
-
-			try {
-				paths = fs.glob(pattern);
-			}
-			catch (e) {
-				paths = [];
-			}
-
-			if (type(paths) != 'array')
+			if (type(path) != 'string' || seen[path] ||
+			    !valid_device_path(path) ||
+			    (match(path, /^\/dev\/ttyUSB[0-9]+$/) === null &&
+			     match(path, /^\/dev\/ttyACM[0-9]+$/) === null &&
+			     match(path, /^\/dev\/wwan[0-9]+at[0-9]+$/) === null))
 				continue;
 
-			for (let path in paths) {
-				if (length(devices) >= 64)
-					break;
+			seen[path] = true;
+			push(devices, { value: path, name: substr(path, 5) });
+		}
+	}
 
-				if (type(path) != 'string' || seen[path] ||
-				    !valid_device_path(path) ||
-				    (match(path, /^\/dev\/ttyUSB[0-9]+$/) === null &&
-				     match(path, /^\/dev\/ttyACM[0-9]+$/) === null &&
-				     match(path, /^\/dev\/wwan[0-9]+at[0-9]+$/) === null))
-					continue;
+	return success({ backend, devices });
+}
 
-				seen[path] = true;
-				push(devices, { value: path, name: substr(path, 5) });
-			}
+function modem_driver_name(path) {
+	const device = substr(path, 5);
+	let target = null;
+
+	try {
+		target = fs.readlink(`/sys/class/usbmisc/${device}/device/driver`);
+	}
+	catch (e) {
+		target = null;
+	}
+
+	if (type(target) != 'string' || !length(target))
+		return null;
+
+	const parts = split(target, '/');
+	return length(parts) ? parts[length(parts) - 1] : null;
+}
+
+function list_modem_ports(backend) {
+	if (backend != 'uqmi' && backend != 'mbim')
+		return failure('invalid_argument',
+			'Only QMI and MBIM control ports can be detected this way.');
+
+	const devices = [];
+	const seen = {};
+	const direct_pattern = backend == 'uqmi'
+		? '/dev/wwan*qmi*'
+		: '/dev/wwan*mbim*';
+	const direct_match = backend == 'uqmi'
+		? /^\/dev\/wwan[0-9]+qmi[0-9]+$/
+		: /^\/dev\/wwan[0-9]+mbim[0-9]+$/;
+	let direct_paths = [];
+	let wdm_paths = [];
+
+	try {
+		direct_paths = fs.glob(direct_pattern);
+		wdm_paths = fs.glob('/dev/cdc-wdm*');
+	}
+	catch (e) {
+		direct_paths = [];
+		wdm_paths = [];
+	}
+
+	if (type(direct_paths) == 'array') {
+		for (let path in direct_paths) {
+			if (length(devices) >= 64)
+				break;
+
+			if (type(path) != 'string' || seen[path] ||
+			    !valid_device_path(path) || match(path, direct_match) === null)
+				continue;
+
+			seen[path] = true;
+			push(devices, {
+				value: path,
+				name: `${substr(path, 5)} (${backend == 'uqmi' ? 'QMI' : 'MBIM'})`
+			});
+		}
+	}
+
+	if (type(wdm_paths) == 'array') {
+		for (let path in wdm_paths) {
+			if (length(devices) >= 64)
+				break;
+
+			if (type(path) != 'string' || seen[path] ||
+			    match(path, /^\/dev\/cdc-wdm[0-9]+$/) === null)
+				continue;
+
+			const driver = modem_driver_name(path);
+			const expected = backend == 'uqmi' ? 'qmi_wwan' : 'cdc_mbim';
+
+			if (driver != expected)
+				continue;
+
+			seen[path] = true;
+			push(devices, {
+				value: path,
+				name: `${substr(path, 5)} (${driver})`
+			});
 		}
 	}
 
@@ -2320,7 +2384,7 @@ function normalize_flag(value) {
 
 function normalize_config(config) {
 	if (!has_exact_keys(config, {
-		global: true, at: true, pcsc: true, uqmi: true, mbim: true
+		global: true, at: true, uqmi: true, mbim: true
 	    }) ||
 	    !has_exact_keys(config.global, {
 		apdu_backend: true,
@@ -2330,7 +2394,6 @@ function normalize_config(config) {
 		custom_isd_r_aid: true
 	    }) ||
 	    !has_exact_keys(config.at, { device: true, debug: true }) ||
-	    !has_exact_keys(config.pcsc, { interface: true }) ||
 	    !has_exact_keys(config.uqmi, { device: true, debug: true }) ||
 	    !has_exact_keys(config.mbim, {
 		device: true, proxy: true, skip_slot_mapping: true
@@ -2348,7 +2411,7 @@ function normalize_config(config) {
 	const aid = config.global.custom_isd_r_aid;
 
 	if (type(apdu_backend) != 'string' ||
-	    index([ 'uqmi', 'mbim', 'at', 'pcsc' ], apdu_backend) < 0 ||
+	    index([ 'uqmi', 'mbim', 'at' ], apdu_backend) < 0 ||
 	    http_backend !== 'curl' || apdu_debug === null || http_debug === null ||
 	    at_debug === null || uqmi_debug === null || mbim_proxy === null ||
 	    mbim_skip_slot_mapping === null ||
@@ -2356,7 +2419,6 @@ function normalize_config(config) {
 	    !valid_device_path(config.at.device) ||
 	    !valid_device_path(config.uqmi.device) ||
 	    !valid_device_path(config.mbim.device) ||
-	    !valid_pcsc_interface(config.pcsc.interface) ||
 	    (apdu_backend == 'uqmi' && !valid_uqmi_device(config.uqmi.device)))
 		return null;
 
@@ -2371,9 +2433,6 @@ function normalize_config(config) {
 		at: {
 			device: config.at.device,
 			debug: at_debug
-		},
-		pcsc: {
-			interface: config.pcsc.interface
 		},
 		uqmi: {
 			device: config.uqmi.device,
@@ -2417,9 +2476,6 @@ read_config = function() {
 				device: uci_value(uci, 'at', 'device', '/dev/ttyUSB2'),
 				debug: uci_value(uci, 'at', 'debug', '0')
 			},
-			pcsc: {
-				interface: uci_value(uci, 'pcsc', 'interface', '')
-			},
 			uqmi: {
 				device: uci_value(uci, 'uqmi', 'device', '/dev/cdc-wdm0'),
 				debug: uci_value(uci, 'uqmi', 'debug', '0')
@@ -2461,8 +2517,6 @@ function write_config(config) {
 			uci.set('lpac', 'at', 'at') &&
 			uci.set('lpac', 'at', 'device', config.at.device) &&
 			uci.set('lpac', 'at', 'debug', config.at.debug) &&
-			uci.set('lpac', 'pcsc', 'pcsc') &&
-			uci.set('lpac', 'pcsc', 'interface', config.pcsc.interface) &&
 			uci.set('lpac', 'uqmi', 'uqmi') &&
 			uci.set('lpac', 'uqmi', 'device', config.uqmi.device) &&
 			uci.set('lpac', 'uqmi', 'debug', config.uqmi.debug) &&
@@ -2503,9 +2557,12 @@ const methods = {
 		call: function(request) {
 			const backend = request.args?.backend;
 
-			if (backend != 'at' && backend != 'pcsc')
+			if (backend == 'uqmi' || backend == 'mbim')
+				return list_modem_ports(backend);
+
+			if (backend != 'at')
 				return failure('invalid_argument',
-					'Only AT and PC/SC device discovery is supported.');
+					'Only AT, QMI, and MBIM device discovery is supported.');
 
 			if (fs.access(ENV_PATH, 'x') !== true ||
 			    fs.access(LPAC_BINARY_PATH, 'x') !== true)
@@ -2587,67 +2644,36 @@ const methods = {
 
 	download_profile: {
 		args: {
-			mode: '',
 			activation_code: '',
-			smdp: '',
-			matching_id: '',
 			imei: '',
 			confirmation_code: ''
 		},
 		call: function(request) {
-			const mode = request.args?.mode;
 			let activation_code = request.args?.activation_code;
-			const smdp = optional_text(request.args?.smdp, 255);
-			const matching_id = optional_text(request.args?.matching_id, 255);
 			const imei = optional_text(request.args?.imei, 16);
 			const confirmation_code = optional_text(request.args?.confirmation_code, 255);
 
-			if (mode == 'activation') {
-				activation_code = normalize_activation_code(activation_code);
+			activation_code = normalize_activation_code(activation_code);
 
-				if (activation_code !== null)
-					activation_code = optional_text(activation_code, 4096);
-			}
-			else {
+			if (activation_code !== null)
 				activation_code = optional_text(activation_code, 4096);
-			}
 
-			if (activation_code === null || smdp === null || matching_id === null ||
-			    imei === null || confirmation_code === null)
+			if (activation_code === null || imei === null ||
+			    confirmation_code === null)
 				return failure('invalid_argument',
 					'The profile download parameters are invalid.');
 
 			const params = [ 'profile', 'download', '-p' ];
 
-			if (mode == 'activation') {
-				if (lc(substr(activation_code, 0, 4)) == 'lpa:')
-					activation_code = 'LPA:' + substr(activation_code, 4);
+			if (lc(substr(activation_code, 0, 4)) == 'lpa:')
+				activation_code = 'LPA:' + substr(activation_code, 4);
 
-				if (!valid_activation_code(activation_code, confirmation_code) ||
-				    length(smdp) || length(matching_id))
-					return failure('invalid_argument',
-						'The LPA activation code is invalid.');
-
-				activation_code = canonicalize_activation_code(activation_code);
-				push(params, '-a', activation_code);
-			}
-			else if (mode == 'manual') {
-				if (length(activation_code) ||
-				    (length(smdp) && !valid_smdp(smdp)) ||
-				    (length(matching_id) && !valid_matching_id(matching_id)))
-					return failure('invalid_argument',
-						'The manual SM-DP+ or matching ID value is invalid.');
-
-				if (length(smdp))
-					push(params, '-s', smdp);
-
-				if (length(matching_id))
-					push(params, '-m', matching_id);
-			}
-			else {
+			if (!valid_activation_code(activation_code, confirmation_code))
 				return failure('invalid_argument',
-					'The profile download mode is invalid.');
-			}
+					'The LPA activation code is invalid.');
+
+			activation_code = canonicalize_activation_code(activation_code);
+			push(params, '-a', activation_code);
 
 			if (length(imei)) {
 				if (!valid_imei(imei))
@@ -2808,21 +2834,6 @@ const methods = {
 
 			return run_lpac(request,
 				[ 'profile', 'delete', id ], 'delete', true);
-		}
-	},
-
-	remove_notification: {
-		args: { seq: '' },
-		call: function(request) {
-			const seq = canonical_uint32(request.args?.seq);
-
-			if (seq === null)
-				return failure('invalid_argument',
-					'The notification sequence number is invalid.');
-
-			return run_lpac(request,
-				[ 'notification', 'remove', seq ],
-				'remove_notification', true);
 		}
 	},
 

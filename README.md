@@ -29,13 +29,13 @@ architecture, locking model, supported operations, and security boundaries.
   fallback when the profile supplies no usable icon.
 - Discover pending SM-DS orders and retrieve their profiles directly through
   the same explicit pre-install metadata decision used by activation codes,
-  local QR decoding, and manual parameters.
+  and local QR decoding.
 - Display bounded PNG/JPEG icons in installed-profile and download-preview
   metadata without external icon requests.
-- List and process provider notifications singly, all, or by selection; remove
-  one, selected, or every local eUICC record explicitly, including sequence zero.
-- Configure validated official AT, uqmi, MBIM, and PC/SC settings, with native
-  AT-port and PC/SC-reader detection.
+- List provider notifications, process all valid records sequentially, or
+  explicitly remove every local eUICC notification record.
+- Configure validated official AT, uqmi, and MBIM settings, with bounded AT,
+  QMI, and MBIM port detection available only for the selected backend.
 - Serialize LuCI eUICC operations through a root-owned runtime lock.
 
 Modem resets, network-interface control, destructive eUICC purge, and raw

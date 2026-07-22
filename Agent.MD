@@ -4,15 +4,15 @@
 
 Extend the stable native LuCI application on
 `feature/smds-discovery-advanced`. Downloads support pasted activation codes,
-manual parameters, camera/file QR inputs, and expiring SM-DS discovery results.
+camera/file QR inputs, and expiring SM-DS discovery results.
 Every download, including a discovered order, pauses in the same live lpac
 session for an explicit provider-metadata decision before PrepareDownload.
 Installed and preview metadata may render strictly bounded PNG/JPEG icons.
-Settings enumerate native AT ports and PC/SC readers. Notifications support
-single, all, and selected processing/removal while preserving explicit
-partial/unknown outcome handling. The bundled lpac series contains the prior
-nine patches plus discovery patches `0040` and `0041`; TLS verification and
-provider-response bounds remain deferred.
+Settings detect AT, QMI, and MBIM ports, with detection available only for the
+selected backend. Notifications expose only Process all and Remove all while
+preserving explicit partial/unknown outcome handling. The bundled lpac series
+contains the prior nine patches plus discovery patches `0040` and `0041`; TLS
+verification and provider-response bounds remain deferred.
 
 ## Sources of truth
 
@@ -54,21 +54,26 @@ provider-response bounds remain deferred.
 - Keep everyday chip details concise while exposing the already-normalized
   EUICCInfo2 capability and certification fields in a collapsed semantic
   `Advanced eUICC information` section.
-- Enumerate AT ports and PC/SC readers through fixed native lpac argv without
-  opening an eUICC channel; validate every returned path, index, and label.
+- Enumerate AT ports through fixed native lpac argv without opening an eUICC
+  channel. Detect QMI and MBIM ports through canonical device names and read-only
+  sysfs bindings without executing lpac or sending protocol requests. Validate
+  every returned path and label, and enable only the selected backend's button.
 - Require every download path to enter one live lpac preview session and receive
   an explicit one-shot decision before PrepareDownload. Missing metadata must
   still stop for confirmation; a lost owner response must never authorize
   installation.
+- Start preview retrieval immediately after form or discovered-entry validation;
+  the later provider-metadata decision is the only installation confirmation.
 - Process provider notifications one sequence at a time, including sequence zero.
   Stop a batch on the first failure and distinguish retrieval failure, unknown
   provider outcome, and successful delivery followed by local removal failure.
-- Support explicit multi-selection for Process selected and Remove selected.
-  Keep standalone Remove all visually destructive and state clearly that it
-  removes local eUICC records without contacting providers.
-- Clearly disclose that bundled lpac v2.3.0 inherits disabled curl peer and
-  hostname verification. Do not claim that this staged branch fixes TLS or
-  provider-response allocation bounds.
+- Expose only Process all and standalone Remove all. Keep Remove all visually
+  destructive and state clearly that it removes local eUICC records without
+  contacting providers.
+- Clearly disclose in repository security documentation that bundled lpac
+  v2.3.0 inherits disabled curl peer and hostname verification. Do not render
+  Download or Notifications page-wide TLS banners, and do not claim that this
+  staged branch fixes TLS or provider-response allocation bounds.
 - Treat the default SM-DP+ address as persistent eUICC state, not a LuCI/UCI
   setting. Expose its nonempty typed update only in Overview, require a second
   old/new confirmation, and claim success only after exact `get_info` readback.

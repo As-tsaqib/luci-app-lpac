@@ -328,8 +328,8 @@ return view.extend({
 		[
 			'lpac-download-mode', 'lpac-activation-code', 'lpac-qr-file',
 			'lpac-qr-camera', 'lpac-qr-file-button', 'lpac-qr-camera-button',
-			'lpac-smdp', 'lpac-matching-id', 'lpac-imei',
-			'lpac-smds', 'lpac-confirmation-code', 'lpac-download-clear'
+			'lpac-imei', 'lpac-smds', 'lpac-confirmation-code',
+			'lpac-download-clear'
 		].forEach(function(id) {
 			const control = document.getElementById(id);
 
@@ -587,12 +587,10 @@ return view.extend({
 	updateMode: function() {
 		const mode = document.getElementById('lpac-download-mode').value;
 		const activation = document.getElementById('lpac-download-activation-fields');
-		const manual = document.getElementById('lpac-download-manual-fields');
 		const discovery = document.getElementById('lpac-download-discovery-fields');
 		const primary = document.getElementById('lpac-download-button');
 
 		activation.style.display = mode === 'activation' ? '' : 'none';
-		manual.style.display = mode === 'manual' ? '' : 'none';
 		discovery.style.display = mode === 'discovery' ? '' : 'none';
 
 		if (primary)
@@ -735,9 +733,8 @@ return view.extend({
 		this.qrDecoding = false;
 
 		[
-			'lpac-activation-code', 'lpac-smdp', 'lpac-matching-id',
-			'lpac-smds', 'lpac-imei', 'lpac-confirmation-code', 'lpac-qr-file',
-			'lpac-qr-camera'
+			'lpac-activation-code', 'lpac-smds', 'lpac-imei',
+			'lpac-confirmation-code', 'lpac-qr-file', 'lpac-qr-camera'
 		].forEach(function(id) {
 			const input = document.getElementById(id);
 
@@ -755,42 +752,30 @@ return view.extend({
 		const mode = document.getElementById('lpac-download-mode').value;
 		const activationInput = document.getElementById('lpac-activation-code');
 		const activationCode = normalizeActivationCode(activationInput.value);
-		const smdp = document.getElementById('lpac-smdp').value.trim();
-		const matchingId = document.getElementById('lpac-matching-id').value.trim();
 		const imei = document.getElementById('lpac-imei').value.trim();
 		const confirmationCode = document.getElementById('lpac-confirmation-code').value.trim();
 
 		[
-			'lpac-activation-code', 'lpac-smdp', 'lpac-matching-id',
-			'lpac-confirmation-code', 'lpac-imei'
+			'lpac-activation-code', 'lpac-confirmation-code', 'lpac-imei'
 		].forEach(function(id) {
 			document.getElementById(id).removeAttribute('aria-invalid');
 		});
 
-		if (mode === 'activation') {
-			const issue = activationCodeIssue(activationCode, confirmationCode, false);
-
-			if (issue === 'confirmation_required')
-				throw validationError(
-					_('This activation code requires a confirmation code.'),
-					'lpac-confirmation-code');
-
-			if (issue)
-				throw validationError(_('Enter a valid LPA:1$… activation code.'),
-					'lpac-activation-code');
-
-			activationInput.value = activationCode;
-		}
-		else if (mode === 'manual') {
-			if (smdp && !validSmdp(smdp))
-				throw validationError(_('The SM-DP+ address is invalid.'), 'lpac-smdp');
-
-			if (matchingId && !validMatchingId(matchingId))
-				throw validationError(_('The matching ID is invalid.'), 'lpac-matching-id');
-		}
-		else {
+		if (mode !== 'activation')
 			throw new Error(_('Select a valid download method.'));
-		}
+
+		const issue = activationCodeIssue(activationCode, confirmationCode, false);
+
+		if (issue === 'confirmation_required')
+			throw validationError(
+				_('This activation code requires a confirmation code.'),
+				'lpac-confirmation-code');
+
+		if (issue)
+			throw validationError(_('Enter a valid LPA:1$… activation code.'),
+				'lpac-activation-code');
+
+		activationInput.value = activationCode;
 
 		if (confirmationCode.length > 255 || /[\u0000-\u001F\u007F]/.test(confirmationCode))
 			throw validationError(
@@ -801,10 +786,7 @@ return view.extend({
 			throw validationError(_('IMEI must contain 14 to 16 digits.'), 'lpac-imei');
 
 		return {
-			mode,
-			activationCode: mode === 'activation' ? activationCode : '',
-			smdp: mode === 'manual' ? smdp : '',
-			matchingId: mode === 'manual' ? matchingId : '',
+			activationCode,
 			imei,
 			confirmationCode
 		};
@@ -860,7 +842,7 @@ return view.extend({
 					'class': 'btn cbi-button cbi-button-positive',
 					'disabled': isReadonlyView || this.isBusy(),
 					'click': ui.createHandlerFn(this,
-						'showDiscoveredDownloadModal', entry)
+						'handleDiscoveredDownload', entry)
 				}, [ _('Retrieve preview') ]);
 
 				this.discoveryButtons.push(button);
@@ -938,7 +920,7 @@ return view.extend({
 		}.bind(this));
 	},
 
-	showDiscoveredDownloadModal: function(entry) {
+	handleDiscoveredDownload: function(entry) {
 		if (this.isBusy() || this.retryBlocked || !entry ||
 		    !this.discoveryEntries.some(function(candidate) {
 			return candidate.entry_id === entry.entry_id;
@@ -956,20 +938,7 @@ return view.extend({
 			return;
 		}
 
-		ui.showModal(_('Review discovered profile'), [
-			E('p', {}, [
-				_('Open the discovered order at %s and retrieve its profile preview? No installation occurs until you approve that preview.').format(entry.smdp)
-			]),
-			E('div', { 'class': 'right' }, [
-				E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
-				' ',
-				E('button', {
-					'class': 'btn cbi-button-positive important',
-					'click': ui.createHandlerFn(this, 'startDiscoveredDownload',
-						entry, confirmationCode)
-				}, [ _('Retrieve preview') ])
-			])
-		]);
+		return this.startDiscoveredDownload(entry, confirmationCode);
 	},
 
 	handlePrimaryAction: function() {
@@ -977,10 +946,10 @@ return view.extend({
 
 		return mode === 'discovery'
 			? this.startDiscovery()
-			: this.showDownloadModal();
+			: this.startValidatedDownload();
 	},
 
-	showDownloadModal: function() {
+	startValidatedDownload: function() {
 		if (this.isBusy())
 			return;
 
@@ -1016,50 +985,17 @@ return view.extend({
 			return;
 		}
 
-		const server = request.mode === 'activation'
-			? activationServer(request.activationCode)
-			: request.smdp;
-
-		ui.showModal(_('Review eSIM profile'), [
-			E('p', {}, [
-				request.mode === 'activation'
-					? _('Connect to the activation-code server and retrieve a profile preview?')
-					: _('Connect with the supplied manual parameters and retrieve a profile preview?')
-			]),
-			E('p', {}, [
-				E('strong', {}, [ _('SM-DP+ server:'), ' ' ]),
-				server || _('Use the default address stored on the eUICC')
-			]),
-			E('p', { 'class': 'cbi-value-description', 'role': 'note' }, [
-				_('lpac will pause before PrepareDownload. Installation begins only after you approve the provider metadata in the next dialog.')
-			]),
-			E('div', { 'class': 'right' }, [
-				E('button', {
-					'class': 'btn',
-					'click': ui.hideModal
-				}, [ _('Cancel') ]),
-				' ',
-				E('button', {
-					'class': 'btn cbi-button-positive important',
-					'click': ui.createHandlerFn(this, 'startDownload', request)
-				}, [ _('Retrieve preview') ])
-			])
-		]);
+		return this.startDownload(request);
 	},
 
 	startDownload: function(request) {
 		return this.startDownloadOperation(function() {
 			return lpac.downloadProfile(
-				request.mode,
 				request.activationCode,
-				request.smdp,
-				request.matchingId,
 				request.imei,
 				request.confirmationCode
 			);
-		}, null, request.mode === 'activation'
-			? activationServer(request.activationCode)
-			: request.smdp);
+		}, null, activationServer(request.activationCode));
 	},
 
 	startDiscoveredDownload: function(entry, confirmationCode) {
@@ -1348,7 +1284,6 @@ return view.extend({
 			E('option', { 'value': 'activation', 'selected': '' }, [
 				_('Activation code or QR')
 			]),
-			E('option', { 'value': 'manual' }, [ _('Manual parameters') ]),
 			E('option', { 'value': 'discovery' }, [ _('SM-DS discovery') ])
 		]);
 		const makeQRInput = function(id, capture) {
@@ -1393,10 +1328,7 @@ return view.extend({
 		return E([
 			E('h2', {}, [ _('Download eSIM profile') ]),
 			E('div', { 'class': 'cbi-map-descr' }, [
-				_('Find and install profiles through SM-DS discovery, a complete LPA activation code, a locally decoded QR image, or manual lpac parameters. Every download pauses for provider-metadata review before installation.')
-			]),
-			E('div', { 'class': 'alert-message warning', 'role': 'note' }, [
-				_('Security warning: lpac does not currently verify the profile-download server\'s TLS certificate or hostname. Only continue with a trusted activation source and network.')
+				_('Find and install profiles through SM-DS discovery, a complete LPA activation code, or a locally decoded QR image. Every download pauses for provider-metadata review before installation.')
 			]),
 			E('div', {
 				'id': 'lpac-download-progress',
@@ -1458,19 +1390,6 @@ return view.extend({
 							})
 						])
 					])
-				])
-			]),
-			E('div', { 'id': 'lpac-download-manual-fields', 'style': 'display:none' }, [
-				E('div', { 'class': 'cbi-section' }, [
-					E('h3', {}, [ _('Manual parameters') ]),
-					formRow(_('SM-DP+ address'),
-						textInput('lpac-smdp', 'text', 'smdp.example.com', 255,
-							controlsDisabled),
-						_('Optional. When empty, lpac uses the default SM-DP+ address configured on the eUICC.')),
-					formRow(_('Matching ID'),
-						textInput('lpac-matching-id', 'password', '', 255,
-							controlsDisabled),
-						_('Optional activation token passed to lpac with -m.'))
 				])
 			]),
 			E('div', { 'id': 'lpac-download-discovery-fields', 'style': 'display:none' }, [

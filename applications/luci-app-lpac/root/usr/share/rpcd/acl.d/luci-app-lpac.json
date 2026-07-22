@@ -27,7 +27,6 @@
 					"discover_profiles",
 					"respond_download_preview",
 					"process_notification",
-					"remove_notification",
 					"remove_all_notifications",
 					"set_default_smdp",
 					"set_config"

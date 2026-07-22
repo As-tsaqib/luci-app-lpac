@@ -58,10 +58,7 @@ const callDiscoverProfiles = rpc.declare({
 const callDownloadProfile = rpc.declare({
 	object: 'luci.lpac',
 	method: 'download_profile',
-	params: [
-		'mode', 'activation_code', 'smdp', 'matching_id', 'imei',
-		'confirmation_code'
-	],
+	params: [ 'activation_code', 'imei', 'confirmation_code' ],
 	expect: {}
 });
 
@@ -111,13 +108,6 @@ const callDeleteProfile = rpc.declare({
 	object: 'luci.lpac',
 	method: 'delete_profile',
 	params: [ 'iccid' ],
-	expect: {}
-});
-
-const callRemoveNotification = rpc.declare({
-	object: 'luci.lpac',
-	method: 'remove_notification',
-	params: [ 'seq' ],
 	expect: {}
 });
 
@@ -289,7 +279,6 @@ return baseclass.extend({
 	nicknameProfile: safeCall(callNicknameProfile),
 	deleteProfile: safeCall(callDeleteProfile),
 	processNotification: safeCall(callProcessNotification),
-	removeNotification: safeCall(callRemoveNotification),
 	removeAllNotifications: safeCall(callRemoveAllNotifications),
 	getConfig: safeCall(callGetConfig),
 	setConfig: safeCall(callSetConfig),
@@ -349,7 +338,7 @@ return baseclass.extend({
 			case 'provider_outcome_unknown':
 				return _('The provider notification outcome is unknown. Do not send it again automatically; refresh the list and review it first.');
 			case 'provider_processed_remove_failed':
-				return _('The provider accepted the notification, but lpac could not remove its local eUICC record. Use Remove instead of processing it again.');
+				return _('The provider accepted the notification, but lpac could not remove its local eUICC record. Use Remove all instead of processing it again.');
 			case 'profile_not_found':
 				return _('lpac could not find that profile identifier. Try the other identifier if available.');
 			case 'profile_not_disabled':

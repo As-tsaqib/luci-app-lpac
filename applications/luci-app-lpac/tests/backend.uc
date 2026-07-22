@@ -22,9 +22,6 @@ function default_config() {
 			device: '/dev/ttyUSB2',
 			debug: '0'
 		},
-		pcsc: {
-			interface: ''
-		},
 		uqmi: {
 			device: '/dev/cdc-wdm0',
 			debug: '0'
@@ -85,6 +82,10 @@ function reset() {
 	global.TEST_ACCESS_FAIL_PATH = null;
 	global.TEST_ACCESS_CALLS = [];
 	global.TEST_GLOB_RESULTS = {};
+	global.TEST_READLINK_RESULTS = {};
+	global.TEST_READLINK_CALLS = [];
+	global.TEST_READLINK_THROW = false;
+	global.TEST_READLINK_THROW_PATH = null;
 	global.TEST_PROCESS_THROW = false;
 	global.TEST_PROCESS_NULL = false;
 	global.TEST_PROCESS_PID_THROW = false;
@@ -163,24 +164,15 @@ function invoke(name, args) {
 
 function activation_download(code, confirmation, imei) {
 	return invoke('download_profile', {
-		mode: 'activation',
 		activation_code: code,
-		smdp: '',
-		matching_id: '',
 		imei: imei || '',
 		confirmation_code: confirmation || ''
 	});
 }
 
-function manual_download(smdp, matching_id, confirmation, imei) {
-	return invoke('download_profile', {
-		mode: 'manual',
-		activation_code: '',
-		smdp: smdp || '',
-		matching_id: matching_id || '',
-		imei: imei || '',
-		confirmation_code: confirmation || ''
-	});
+function test_download(confirmation, imei) {
+	return activation_download('LPA:1$smdp.example.com$MATCH',
+		confirmation || '', imei || '');
 }
 
 function emit_download_output(fragment) {
@@ -347,35 +339,99 @@ check(result.success && length(result.data.devices) == 64 &&
 	'AT fallback detection cannot exceed the 64-device native result cap');
 
 reset();
-global.TEST_EXEC_REPLY = {
-	code: 0,
-	stdout: sprintf('%J\n', {
-		type: 'driver',
-		payload: {
-			env: 'LPAC_APDU_PCSC_DRV_IFID',
-			data: [
-				{ env: '0', name: 'USB smart-card reader' },
-				{ env: '01', name: 'Non-canonical index' },
-				{ env: '1025', name: 'Out-of-range index' }
-			]
-		}
-	})
+global.TEST_GLOB_RESULTS = {
+	'/dev/wwan*qmi*': [
+		'/dev/wwan0qmi0', '/dev/wwan0qmi0', '/dev/wwan-qmi',
+		'/dev/wwan0qmi0;reboot'
+	],
+	'/dev/cdc-wdm*': [
+		'/dev/cdc-wdm0', '/dev/cdc-wdm1', '/dev/cdc-wdm2',
+		'/dev/cdc-wdm2;reboot'
+	]
 };
-result = invoke('list_apdu_devices', { backend: 'pcsc' });
+global.TEST_READLINK_RESULTS = {
+	'/sys/class/usbmisc/cdc-wdm0/device/driver':
+		'../../../../../../bus/usb/drivers/qmi_wwan',
+	'/sys/class/usbmisc/cdc-wdm1/device/driver':
+		'../../../../../../bus/usb/drivers/cdc_mbim'
+};
+result = invoke('list_apdu_devices', { backend: 'uqmi' });
 same(result.data, {
-	backend: 'pcsc',
-	devices: [ { value: '0', name: 'USB smart-card reader' } ]
-}, 'PC/SC detection returns canonical bounded reader indices and safe names');
-same(global.TEST_LAST_CALL.request.params, [
-	'LPAC_APDU=pcsc', 'LPAC_HTTP=curl', '/usr/lib/lpac',
-	'driver', 'apdu', 'list'
-], 'PC/SC detection cannot inject an alternate executable or driver command');
+	backend: 'uqmi',
+	devices: [
+		{ value: '/dev/wwan0qmi0', name: 'wwan0qmi0 (QMI)' },
+		{ value: '/dev/cdc-wdm0', name: 'cdc-wdm0 (qmi_wwan)' }
+	]
+}, 'QMI detection accepts only canonical direct ports and qmi_wwan-bound cdc-wdm devices');
+check(global.TEST_LAST_CALL === null && length(global.TEST_ACCESS_CALLS) == 0,
+	'QMI detection reads names and sysfs only without executing or opening lpac');
+same(global.TEST_READLINK_CALLS, [
+	'/sys/class/usbmisc/cdc-wdm0/device/driver',
+	'/sys/class/usbmisc/cdc-wdm1/device/driver',
+	'/sys/class/usbmisc/cdc-wdm2/device/driver'
+], 'QMI detection classifies each canonical cdc-wdm path by its kernel driver');
 
 reset();
+global.TEST_GLOB_RESULTS = {
+	'/dev/wwan*mbim*': [ '/dev/wwan1mbim0', '/dev/wwan1mbim0', '/dev/wwan-mbim' ],
+	'/dev/cdc-wdm*': [ '/dev/cdc-wdm0', '/dev/cdc-wdm1' ]
+};
+global.TEST_READLINK_RESULTS = {
+	'/sys/class/usbmisc/cdc-wdm0/device/driver':
+		'../../../../../../bus/usb/drivers/qmi_wwan',
+	'/sys/class/usbmisc/cdc-wdm1/device/driver':
+		'../../../../../../bus/usb/drivers/cdc_mbim'
+};
 result = invoke('list_apdu_devices', { backend: 'mbim' });
+same(result.data, {
+	backend: 'mbim',
+	devices: [
+		{ value: '/dev/wwan1mbim0', name: 'wwan1mbim0 (MBIM)' },
+		{ value: '/dev/cdc-wdm1', name: 'cdc-wdm1 (cdc_mbim)' }
+	]
+}, 'MBIM detection accepts only canonical direct ports and cdc_mbim-bound cdc-wdm devices');
+check(global.TEST_LAST_CALL === null && length(global.TEST_ACCESS_CALLS) == 0,
+	'MBIM detection reads names and sysfs only without executing or opening lpac');
+
+reset();
+global.TEST_GLOB_RESULTS = {
+	'/dev/wwan*qmi*': [],
+	'/dev/cdc-wdm*': [ '/dev/cdc-wdm0', '/dev/cdc-wdm1' ]
+};
+global.TEST_READLINK_THROW_PATH =
+	'/sys/class/usbmisc/cdc-wdm0/device/driver';
+global.TEST_READLINK_RESULTS = {
+	'/sys/class/usbmisc/cdc-wdm1/device/driver':
+		'../../../../../../bus/usb/drivers/qmi_wwan'
+};
+result = invoke('list_apdu_devices', { backend: 'uqmi' });
+same(result.data.devices, [
+	{ value: '/dev/cdc-wdm1', name: 'cdc-wdm1 (qmi_wwan)' }
+], 'one unreadable sysfs binding does not hide other safely classified QMI ports');
+
+reset();
+const maximum_direct_qmi_devices = [];
+for (let i = 0; i < 64; i++)
+	push(maximum_direct_qmi_devices, `/dev/wwan${i}qmi0`);
+global.TEST_GLOB_RESULTS = {
+	'/dev/wwan*qmi*': maximum_direct_qmi_devices,
+	'/dev/cdc-wdm*': [ '/dev/cdc-wdm0' ]
+};
+global.TEST_READLINK_RESULTS = {
+	'/sys/class/usbmisc/cdc-wdm0/device/driver':
+		'../../../../../../bus/usb/drivers/qmi_wwan'
+};
+result = invoke('list_apdu_devices', { backend: 'uqmi' });
+check(result.success && length(result.data.devices) == 64 &&
+	index(map(result.data.devices, function(device) { return device.value; }),
+		'/dev/cdc-wdm0') < 0 && length(global.TEST_READLINK_CALLS) == 0,
+	'QMI detection enforces its 64-port cap before scanning cdc-wdm fallbacks');
+
+reset();
+result = invoke('list_apdu_devices', { backend: 'pcsc' });
 check(!result.success && result.error == 'invalid_argument' &&
 	global.TEST_LAST_CALL === null,
-	'device detection rejects every backend without a native enumerator');
+	'removed PC/SC detection is rejected without process execution');
 
 reset();
 global.TEST_EXEC_REPLY = {
@@ -723,30 +779,6 @@ for (let address in [
 
 reset();
 global.TEST_EXEC_REPLY = { code: 0, stdout: terminal(null) };
-result = invoke('remove_notification', { seq: '4294967295' });
-check(result.success, 'UINT32_MAX notification can be removed');
-same(global.TEST_LAST_CALL.request.params,
-	[ '-n', '/var/run/luci-lpac.lock', '/usr/bin/lpac',
-		'notification', 'remove', '4294967295' ],
-	'flock and notification arguments remain separate argv elements');
-
-reset();
-global.TEST_EXEC_REPLY = { code: 0, stdout: terminal(null) };
-result = invoke('remove_notification', { seq: '0' });
-check(result.success, 'notification sequence zero can be removed');
-same(global.TEST_LAST_CALL.request.params,
-	[ '-n', '/var/run/luci-lpac.lock', '/usr/bin/lpac',
-		'notification', 'remove', '0' ],
-	'notification sequence zero remains a canonical argv element');
-check(!invoke('remove_notification', { seq: '00' }).success &&
-	!invoke('remove_notification', { seq: '01' }).success &&
-	!invoke('remove_notification', { seq: '+1' }).success &&
-	!invoke('remove_notification', { seq: 0 }).success &&
-	!invoke('remove_notification', { seq: '4294967296' }).success,
-	'invalid notification sequences are rejected');
-
-reset();
-global.TEST_EXEC_REPLY = { code: 0, stdout: terminal(null) };
 result = invoke('remove_all_notifications');
 check(result.success && result.data === null,
 	'standalone Remove all normalizes a successful local-only operation');
@@ -978,27 +1010,25 @@ check(result.success && global.TEST_UCI.at.device == config.at.device,
 reset();
 config = default_config();
 config.global.apdu_backend = 'pcsc';
-config.pcsc.interface = '7';
 result = invoke('set_config', { config });
-check(result.success && global.TEST_UCI.pcsc.interface == '7',
-	'a detected canonical PC/SC reader index is validated and committed');
 
-for (let interface_value in [ '01', '-1', '1025', '1\n', 1 ]) {
-	reset();
-	config = default_config();
-	config.pcsc.interface = interface_value;
-	result = invoke('set_config', { config });
-	check(!result.success && result.error == 'invalid_config',
-		'non-canonical or out-of-range PC/SC reader indices are rejected');
-}
+check(!result.success && result.error == 'invalid_config',
+	'the removed PC/SC backend cannot be selected');
+
+reset();
+config = default_config();
+config.pcsc = { interface: '0' };
+result = invoke('set_config', { config });
+check(!result.success && result.error == 'invalid_config',
+	'legacy PC/SC sections are not accepted through the typed Settings RPC');
 
 reset();
 config = default_config();
 config.global.apdu_backend = 'uqmi';
 config.uqmi.device = '/dev/wwan0qmi0';
 result = invoke('set_config', { config });
-check(!result.success && result.error == 'invalid_config',
-	'active uqmi backend retains its strict control-device allowlist');
+check(result.success && global.TEST_UCI.uqmi.device == '/dev/wwan0qmi0',
+	'an active uqmi backend accepts a canonical detected wwan QMI port');
 
 reset();
 config = default_config();
@@ -1053,12 +1083,12 @@ reset();
 const activation_code =
 	'lpa:1$smdp.example.com$MATCHING-ID$1.2.840.113549$1';
 const confirmation_code = 'confirm-secret';
-result = manual_download('smdp.example.com', 'MATCHING-ID\n', '', '');
+result = activation_download(
+	'LPA:1$smdp.example.com$MATCHING-ID\n$OID', '', '');
 check(!result.success && result.error == 'invalid_argument' &&
 	global.TEST_LAST_PROCESS === null,
 	'a control-suffixed matching ID is rejected before process creation');
-result = manual_download('smdp.example.com', 'MATCHING-ID', '',
-	'12345678901234\n');
+result = activation_download(activation_code, '', '12345678901234\n');
 check(!result.success && result.error == 'invalid_argument' &&
 	global.TEST_LAST_PROCESS === null,
 	'a control-suffixed download IMEI is rejected before process creation');
@@ -1206,7 +1236,7 @@ check(result.success && result.data.status == 'idle' && result.data.phase == 'id
 	'global status becomes idle after complete process-and-pipe cleanup');
 
 reset();
-result = manual_download('', '', '', '');
+result = test_download();
 const reject_job_id = result.data.job_id;
 const reject_token = result.data.decision_token;
 emit_download_output(download_progress('preview', 'y/n'));
@@ -1230,7 +1260,7 @@ check(result.success && result.data.status == 'cancelled' &&
 	'user rejection is a distinct safe terminal state, not an installation error');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const corrected_metadata_job = result.data.job_id;
 const corrected_metadata_token = result.data.decision_token;
 emit_download_output(download_progress('es8p_metadata_parse', {
@@ -1253,7 +1283,7 @@ global.TEST_LAST_PROCESS.output(DOWNLOAD_EXIT_FAILED);
 end_download_output();
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const preview_timeout_job = result.data.job_id;
 emit_download_output(download_progress('preview', 'y/n'));
 global.TEST_TIMERS[1].callback();
@@ -1278,7 +1308,7 @@ check(!result.success && result.error == 'timeout' &&
 
 reset();
 global.TEST_SYSTEM_EXITS = [ 1, 0 ];
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 emit_download_output(download_progress('es10b_prepare_download', 'provider'));
 same(map(global.TEST_SYSTEM_CALLS, call => call.argv), [
 	[ '/bin/kill', '-KILL', '--', '-4321' ],
@@ -1291,7 +1321,7 @@ end_download_output();
 
 reset();
 global.TEST_SYSTEM_EXITS = [ 1, 1, 0 ];
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 emit_download_output(download_progress('es10b_prepare_download', 'provider'));
 check(length(global.TEST_SYSTEM_CALLS) == 2 &&
 	global.TEST_TIMERS[3].timeout == 1000,
@@ -1304,7 +1334,7 @@ global.TEST_LAST_PROCESS.output(DOWNLOAD_EXIT_FAILED);
 end_download_output();
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const bypass_after_preview_timeout_job = result.data.job_id;
 emit_download_output(download_progress('preview', 'y/n'));
 global.TEST_TIMERS[1].callback();
@@ -1319,7 +1349,7 @@ check(!result.success && result.error == 'timeout' &&
 	'post-gate activity after a timed-out rejection is classified as uncertain');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const auth_timeout_job = result.data.job_id;
 global.TEST_TIMERS[0].callback();
 global.TEST_LAST_PROCESS.output(0);
@@ -1330,7 +1360,7 @@ check(!result.success && result.error == 'timeout' &&
 	'overall timeout before any y decision is safely known to precede installation');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const accepted_timeout_job = result.data.job_id;
 const accepted_timeout_token = result.data.decision_token;
 emit_download_output(download_progress('preview', 'y/n'));
@@ -1348,7 +1378,7 @@ check(!result.success && result.error == 'timeout' &&
 	'any timeout after an attempted y requires profile and notification verification');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const bypass_job = result.data.job_id;
 emit_download_output(download_progress('es10b_prepare_download', 'provider'));
 check(length(global.TEST_SYSTEM_CALLS) == 1,
@@ -1362,7 +1392,7 @@ check(!result.success && result.error == 'execution_failed' &&
 	'a violated mandatory gate is never reported as safely not installed');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const trailing_record_job = result.data.job_id;
 emit_download_output(download_progress('preview', 'y/n'));
 invoke('respond_download_preview', {
@@ -1379,7 +1409,7 @@ check(!result.success && result.reason == 'outcome_unknown',
 	'a recognized record after terminal success invalidates outcome verification');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const malformed_job = result.data.job_id;
 emit_download_output('{"type":"progress",bad}\n');
 global.TEST_LAST_PROCESS.output(DOWNLOAD_EXIT_FAILED);
@@ -1392,7 +1422,7 @@ check(!result.success && result.reason == 'preview_protocol_error',
 	'malformed NDJSON fails closed without fabricating EOF or outcome uncertainty');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const truncated_job = result.data.job_id;
 emit_download_output(substr(download_progress('preview', 'y/n'), 0, 20));
 global.TEST_LAST_PROCESS.output(DOWNLOAD_EXIT_FAILED);
@@ -1402,7 +1432,7 @@ check(!result.success && result.reason == 'preview_protocol_error',
 	'a non-newline NDJSON tail is rejected as truncated protocol data');
 
 reset();
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const oversized_output_job = result.data.job_id;
 emit_download_output(make_text('X', 70000));
 for (let i = 0; i < 20 && length(global.TEST_OUTPUT_PIPE.buffer); i++)
@@ -1442,19 +1472,25 @@ result = activation_download(make_text('A', 4097), '', '');
 check(!result.success && result.error == 'invalid_argument' &&
 	global.TEST_LAST_PROCESS === null,
 	'oversized activation codes are rejected before pipe or process creation');
-result = manual_download('smdp.example.com/endpoint', 'MATCH', '', '');
+result = invoke('download_profile', {
+	activation_code: '',
+	smdp: 'smdp.example.com/endpoint',
+	matching_id: 'MATCH',
+	imei: '',
+	confirmation_code: ''
+});
 check(!result.success && result.error == 'invalid_argument' &&
 	global.TEST_LAST_PROCESS === null,
-	'manual server paths cannot inject download arguments');
+	'removed manual parameters cannot start a profile download');
 
 reset();
 global.TEST_PIPE_CLONE_FAIL = true;
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 check(!result.success && result.error == 'execution_failed' &&
 	global.TEST_LAST_PROCESS === null && global.TEST_LOCK_CLOSED,
 	'pipe clone failure closes preflight resources before any provider process');
 global.TEST_PIPE_CLONE_FAIL = false;
-result = manual_download('smdp.example.com', 'RECOVERY', '', '');
+result = test_download();
 check(result.success,
 	'pipe setup failure leaves no stale running job or lock');
 const recovery_job = result.data.job_id;
@@ -1470,28 +1506,28 @@ end_download_output();
 
 reset();
 global.TEST_PROCESS_NULL = true;
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 check(!result.success && result.error == 'execution_failed' &&
 	global.TEST_LOCK_CLOSED && global.TEST_PIPE_CLOSE_COUNT >= 6,
 	'a null process spawn closes both child and parent pipe resources');
 
 reset();
 global.TEST_TIMER_NULL_AT = 3;
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 check(!result.success && result.error == 'execution_failed' &&
 	global.TEST_LAST_PROCESS === null,
 	'a missing preallocated drain timer prevents unsafe process creation');
 
 reset();
 global.TEST_HANDLE_NULL = true;
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 check(!result.success && result.error == 'execution_failed' &&
 	global.TEST_LAST_PROCESS === null,
 	'a missing output watcher prevents a credential-bearing child from spawning');
 
 reset();
 global.TEST_HANDLE_NULL_AT = 2;
-result = manual_download('smdp.example.com', 'MATCH', '', '');
+result = test_download();
 const rearm_failure_job = result.data.job_id;
 emit_download_output(download_progress('preview', 'y/n'));
 check(global.TEST_TIMERS[2].timeout == 100 &&

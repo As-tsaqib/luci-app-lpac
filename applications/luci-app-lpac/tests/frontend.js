@@ -319,6 +319,9 @@ assert.match(lpacClientSource,
 	/method: 'download_discovered_profile',[\s\S]*?params: \[ 'entry_id', 'confirmation_code' \]/,
 	'discovered download should accept only an opaque entry token and confirmation code');
 assert.match(lpacClientSource,
+	/method: 'download_profile',[\s\S]*?params: \[ 'activation_code', 'imei', 'confirmation_code' \]/,
+	'activation download should expose no removed manual-parameter fields');
+assert.match(lpacClientSource,
 	/method: 'list_apdu_devices',[\s\S]*?params: \[ 'backend' \]/,
 	'APDU device enumeration should accept one allowlisted backend name');
 assert.match(lpacClientSource, /method: 'remove_all_notifications'/,
@@ -356,7 +359,7 @@ assert.strictEqual(actualLpacClient.errorMessage({
 	success: false,
 	error: 'lpac_error',
 	reason: 'provider_processed_remove_failed'
-}), 'The provider accepted the notification, but lpac could not remove its local eUICC record. Use Remove instead of processing it again.');
+}), 'The provider accepted the notification, but lpac could not remove its local eUICC record. Use Remove all instead of processing it again.');
 assert.strictEqual(actualLpacClient.errorMessage({
 	success: false,
 	error: 'timeout',
@@ -547,56 +550,45 @@ const notificationsPage = notificationsView.render({
 		notificationAddress: 'example.invalid'
 	} ]
 });
-const removeButtons = byText(notificationsPage, 'button', 'Remove');
-assert.strictEqual(removeButtons.length, 1, 'Remove button should exist');
-assert.ok(removeButtons[0].attrs.disabled == null,
-	'Remove button must support a writable sequence-zero notification');
-assert.strictEqual(byText(notificationsPage, 'button', 'Process').length, 1,
-	'each notification should expose one provider Process action');
 assert.strictEqual(byText(notificationsPage, 'button', 'Process all').length, 1,
 	'the page should expose one ordered Process all action');
-assert.ok(byText(notificationsPage, 'button', 'Process')[0].attrs.disabled == null &&
-	byText(notificationsPage, 'button', 'Process all')[0].attrs.disabled == null,
-	'provider processing controls should remain writable for sequence zero');
-assert.strictEqual(byText(notificationsPage, 'button', 'Process selected').length, 1);
-assert.strictEqual(byText(notificationsPage, 'button', 'Remove selected').length, 1);
 assert.strictEqual(byText(notificationsPage, 'button', 'Remove all').length, 1,
 	'the page should expose an explicit standalone Remove all action');
-const sequenceSelection = findAll(notificationsPage, function(node) {
-	return node.tag === 'input' && node.attrs?.['aria-label'] ===
-		'Select notification 0';
-})[0];
-assert.ok(sequenceSelection, 'each canonical sequence should have a selection checkbox');
-sequenceSelection.checked = true;
-sequenceSelection.attrs.change({ currentTarget: sequenceSelection });
-assert.strictEqual(byText(notificationsPage, 'button', 'Process selected')[0].disabled,
-	false, 'selecting a sequence should enable Process selected');
-assert.strictEqual(byText(notificationsPage, 'button', 'Remove selected')[0].disabled,
-	false, 'selecting a sequence should enable Remove selected');
-byText(notificationsPage, 'button', 'Process selected')[0].attrs.click();
-assert.strictEqual(modal.title, 'Process notification',
-	'Process selected should reuse the ordered provider-processing confirmation');
+assert.strictEqual(byText(notificationsPage, 'button', 'Process').length, 0,
+	'notifications must not expose individual Process actions');
+assert.strictEqual(byText(notificationsPage, 'button', 'Remove').length, 0,
+	'notifications must not expose individual Remove actions');
+assert.strictEqual(byText(notificationsPage, 'button', 'Process selected').length, 0,
+	'notifications must not expose selection-based processing');
+assert.strictEqual(byText(notificationsPage, 'button', 'Remove selected').length, 0,
+	'notifications must not expose selection-based removal');
+assert.strictEqual(findAll(notificationsPage, function(node) {
+	return node.tag === 'input' && node.attrs?.['aria-label']?.startsWith(
+		'Select notification');
+}).length, 0, 'notification rows must not render selection checkboxes');
+assert.strictEqual(byText(notificationsPage, 'button', 'Process all')[0].disabled,
+	false, 'Process all should remain writable for sequence zero');
+assert.strictEqual(byText(notificationsPage, 'button', 'Remove all')[0].disabled,
+	false, 'Remove all should remain writable for sequence zero');
+
+byText(notificationsPage, 'button', 'Process all')[0].attrs.click();
+assert.strictEqual(modal.title, 'Process all notifications',
+	'Process all should require an ordered provider-processing confirmation');
+assert.strictEqual(findAll(modal.content, function(node) {
+	return node.attrs?.id === 'lpac-notification-remove-after-process';
+}).length, 1, 'the Process all modal should retain optional local removal');
 ui.hideModal();
-byText(notificationsPage, 'button', 'Remove selected')[0].attrs.click();
-assert.strictEqual(modal.title, 'Remove notification',
-	'Remove selected should retain the destructive local-only warning');
-ui.hideModal();
+
 byText(notificationsPage, 'button', 'Remove all')[0].attrs.click();
 assert.strictEqual(modal.title, 'Remove all notifications',
 	'Remove all should require a dedicated destructive confirmation');
 assert.ok(modal.content.map(textContent).join('').includes('does not contact any provider'),
 	'Remove all should state clearly that no provider processing occurs');
 ui.hideModal();
-byText(notificationsPage, 'button', 'Process')[0].attrs.click();
-assert.strictEqual(modal.title, 'Process notification',
-	'sequence zero should open the normal provider-processing confirmation');
-assert.strictEqual(findAll(modal.content, function(node) {
-	return node.attrs?.id === 'lpac-notification-remove-after-process';
-}).length, 1, 'the processing modal should retain the optional local-removal choice');
 assert.strictEqual(findAll(notificationsPage, function(node) {
 	return node.attrs?.class === 'alert-message warning' &&
 		textContent(node).startsWith('Security warning: the bundled lpac');
-}).length, 1, 'the page-wide TLS limitation should remain a prominent warning');
+}).length, 0, 'the Notifications page should not render a TLS warning banner');
 
 const overviewView = loadView('overview.js');
 const overviewPage = overviewView.render([
@@ -686,12 +678,11 @@ const settingsPage = settingsView.render([
 				custom_isd_r_aid: 'A0000005591010FFFFFFFF8900000100'
 			},
 			at: { device: '/dev/ttyUSB2', debug: '0' },
-			pcsc: { interface: '' },
 			uqmi: { device: '/dev/cdc-wdm0', debug: '0' },
 			mbim: { device: '/dev/cdc-wdm0', proxy: '0', skip_slot_mapping: '1' }
 		}
 	},
-	{ success: true, data: { apdu: [ 'mbim', 'at', 'pcsc' ], http: [ 'curl' ] } }
+	{ success: true, data: { apdu: [ 'mbim', 'uqmi', 'at' ], http: [ 'curl' ] } }
 ]);
 documentRoot = settingsPage;
 
@@ -707,10 +698,15 @@ assert.ok(findById('lpac-mbim-proxy').attrs.checked == null,
 	'false MBIM proxy must render unchecked');
 assert.ok(findById('lpac-mbim-skip-slot-mapping').attrs.checked != null,
 	'true MBIM slot-mapping bypass must render checked');
-assert.strictEqual(findById('lpac-pcsc-interface').value, '',
-	'an empty PC/SC interface should preserve native first-reader selection');
-assert.ok(findById('lpac-detect-at') && findById('lpac-detect-pcsc'),
-	'Settings should provide explicit AT and PC/SC detection actions');
+assert.ok(findById('lpac-detect-at') && findById('lpac-detect-uqmi') &&
+	findById('lpac-detect-mbim'),
+	'Settings should provide explicit AT, QMI, and MBIM detection actions');
+assert.strictEqual(findById('lpac-detect-mbim').disabled, false,
+	'only the detection action for the configured backend should start enabled');
+assert.strictEqual(findById('lpac-detect-uqmi').disabled, true,
+	'an inactive QMI backend must keep its detection action disabled');
+assert.strictEqual(findById('lpac-detect-at').disabled, true,
+	'an inactive AT backend must keep its detection action disabled');
 
 const backend = findById('lpac-apdu-backend');
 const backendOptions = findAll(backend, function(node) { return node.tag === 'option'; });
@@ -726,7 +722,7 @@ assert.strictEqual(findAll(settingsPage, function(node) {
 }).length, 0, 'inactive backend caveats should not render as page-wide warnings');
 assert.strictEqual(findAll(settingsPage, function(node) {
 	return node.attrs?.class === 'cbi-value-description' &&
-		textContent(node).startsWith('Use the /dev/cdc-wdmN control device');
+		textContent(node).startsWith('Use the QMI control device');
 }).length, 1, 'uqmi device guidance should render as field help');
 assert.strictEqual(findAll(settingsPage, function(node) {
 	return node.attrs?.class === 'cbi-value-description' &&
@@ -743,6 +739,46 @@ assert.ok(!settingsSource.includes('setDefaultSmdp') &&
 	!settingsSource.includes('lpac-default-smdp'),
 	'the persistent eUICC default editor must not be mixed into UCI Settings');
 
+const unselectedSettingsPage = settingsView.render([
+	{
+		success: true,
+		data: {
+			global: {},
+			at: { device: '/dev/ttyUSB2', debug: '0' },
+			uqmi: { device: '/dev/cdc-wdm0', debug: '0' },
+			mbim: { device: '/dev/cdc-wdm0', proxy: '1', skip_slot_mapping: '1' }
+		}
+	},
+	{ success: true, data: { apdu: [ 'mbim', 'uqmi', 'at' ], http: [ 'curl' ] } }
+]);
+documentRoot = unselectedSettingsPage;
+const unselectedBackend = document.getElementById('lpac-apdu-backend');
+
+assert.strictEqual(unselectedBackend.value, '',
+	'a missing APDU backend should render an explicit unselected state');
+[ 'at', 'uqmi', 'mbim' ].forEach(function(name) {
+	assert.strictEqual(document.getElementById('lpac-detect-' + name).disabled, true,
+		`the ${name} detection action must stay disabled without a selected backend`);
+});
+
+unselectedBackend.value = 'uqmi';
+unselectedBackend.attrs.change();
+assert.strictEqual(document.getElementById('lpac-detect-uqmi').disabled, false,
+	'selecting uqmi should enable only QMI port detection');
+assert.strictEqual(document.getElementById('lpac-detect-mbim').disabled, true,
+	'selecting uqmi must not enable MBIM port detection');
+assert.strictEqual(document.getElementById('lpac-detect-at').disabled, true,
+	'selecting uqmi must not enable AT port detection');
+
+unselectedBackend.value = '';
+unselectedBackend.attrs.change();
+[ 'at', 'uqmi', 'mbim' ].forEach(function(name) {
+	assert.strictEqual(document.getElementById('lpac-detect-' + name).disabled, true,
+		`clearing the backend must disable the ${name} detection action again`);
+});
+
+documentRoot = settingsPage;
+
 async function testApduDetection() {
 	const detectionCalls = [];
 
@@ -758,11 +794,24 @@ async function testApduDetection() {
 						value: '/dev/serial/by-id/usb-Test_Modem-if00',
 						name: 'Test modem'
 					} ]
-					: [ { value: '3', name: 'Test smart-card reader' } ]
+					: backendName === 'uqmi'
+						? [ { value: '/dev/wwan0qmi0', name: 'Test QMI port' } ]
+						: [ { value: '/dev/wwan0mbim0', name: 'Test MBIM port' } ]
 			}
 		});
 	};
 
+	backend.value = '';
+	backend.attrs.change();
+	await findById('lpac-detect-mbim').attrs.click();
+	assert.deepStrictEqual(detectionCalls, [],
+		'a programmatic click must not bypass the missing-backend guard');
+
+	backend.value = 'at';
+	backend.attrs.change();
+	assert.strictEqual(findById('lpac-detect-at').disabled, false);
+	assert.strictEqual(findById('lpac-detect-uqmi').disabled, true);
+	assert.strictEqual(findById('lpac-detect-mbim').disabled, true);
 	await findById('lpac-detect-at').attrs.click();
 	const atUse = byText(findById('lpac-at-devices'), 'button', 'Use selected')[0];
 	assert.ok(atUse, 'AT detection should render a selectable native result');
@@ -771,14 +820,29 @@ async function testApduDetection() {
 		'/dev/serial/by-id/usb-Test_Modem-if00',
 		'using a detected AT port should fill the validated device field');
 
-	await findById('lpac-detect-pcsc').attrs.click();
-	const pcscUse = byText(findById('lpac-pcsc-devices'), 'button', 'Use selected')[0];
-	assert.ok(pcscUse, 'PC/SC detection should render a selectable reader result');
-	pcscUse.attrs.click();
-	assert.strictEqual(findById('lpac-pcsc-interface').value, '3',
-		'using a detected PC/SC reader should fill its canonical interface index');
-	assert.deepStrictEqual(detectionCalls, [ 'at', 'pcsc' ],
-		'each detection action should invoke only its allowlisted backend');
+	await findById('lpac-detect-uqmi').attrs.click();
+	assert.deepStrictEqual(detectionCalls, [ 'at' ],
+		'an inactive detection action must be rejected even if invoked directly');
+
+	backend.value = 'uqmi';
+	backend.attrs.change();
+	await findById('lpac-detect-uqmi').attrs.click();
+	const uqmiUse = byText(findById('lpac-uqmi-devices'), 'button', 'Use selected')[0];
+	assert.ok(uqmiUse, 'QMI detection should render a selectable control port');
+	uqmiUse.attrs.click();
+	assert.strictEqual(findById('lpac-uqmi-device').value, '/dev/wwan0qmi0',
+		'using a detected QMI port should fill its validated device field');
+
+	backend.value = 'mbim';
+	backend.attrs.change();
+	await findById('lpac-detect-mbim').attrs.click();
+	const mbimUse = byText(findById('lpac-mbim-devices'), 'button', 'Use selected')[0];
+	assert.ok(mbimUse, 'MBIM detection should render a selectable control port');
+	mbimUse.attrs.click();
+	assert.strictEqual(findById('lpac-mbim-device').value, '/dev/wwan0mbim0',
+		'using a detected MBIM port should fill its validated device field');
+	assert.deepStrictEqual(detectionCalls, [ 'at', 'uqmi', 'mbim' ],
+		'each active detection action should invoke only its selected backend');
 }
 
 const menu = JSON.parse(fs.readFileSync(path.join(appRoot,
@@ -944,8 +1008,8 @@ async function testDownloadView() {
 	[
 		'lpac-download-mode', 'lpac-activation-code', 'lpac-qr-file',
 		'lpac-qr-camera', 'lpac-qr-file-button', 'lpac-qr-camera-button',
-		'lpac-smdp', 'lpac-matching-id', 'lpac-confirmation-code',
-		'lpac-smds', 'lpac-download-discovery-fields', 'lpac-discovery-results',
+		'lpac-confirmation-code', 'lpac-smds',
+		'lpac-download-discovery-fields', 'lpac-discovery-results',
 		'lpac-imei', 'lpac-download-clear', 'lpac-download-button',
 		'lpac-download-progress', 'lpac-download-progress-text',
 		'lpac-download-verification'
@@ -979,62 +1043,28 @@ async function testDownloadView() {
 		return node.attrs?.class === 'alert-message warning' &&
 			textContent(node).includes('does not currently verify');
 	});
-	assert.strictEqual(downloadWarnings.length, 1,
-		'the Download view should prominently disclose the inherited TLS limitation');
-	assert.ok(textContent(downloadWarnings[0]).includes('does not currently verify'),
-		'the warning should explain peer and hostname verification without hiding the feature');
+	assert.strictEqual(downloadWarnings.length, 0,
+		'the Download view should not render a TLS warning banner');
 	assert.strictEqual(downloadById('lpac-download-button').disabled, false,
-		'the TLS disclosure must not disable an explicitly requested profile download');
+		'profile preview retrieval should remain available when the form is idle');
 
 	const mode = downloadById('lpac-download-mode');
 	const activationFields = downloadById('lpac-download-activation-fields');
-	const manualFields = downloadById('lpac-download-manual-fields');
 	const discoveryFields = downloadById('lpac-download-discovery-fields');
-	mode.value = 'manual';
-	downloadView.updateMode();
-	assert.strictEqual(activationFields.style.display, 'none',
-		'manual mode should hide activation-code controls');
-	assert.strictEqual(manualFields.style.display, '',
-		'manual mode should reveal non-interactive lpac parameters');
-	assert.strictEqual(discoveryFields.style.display, 'none',
-		'manual mode should keep SM-DS controls hidden');
-
-	const smdpInput = downloadById('lpac-smdp');
-	const matchingInput = downloadById('lpac-matching-id');
-	smdpInput.value = 'smdp.example.com:443';
-	matchingInput.value = 'MATCHING-ID';
-	assert.deepStrictEqual(downloadView.collectRequest(), {
-		mode: 'manual',
-		activationCode: '',
-		smdp: 'smdp.example.com:443',
-		matchingId: 'MATCHING-ID',
-		imei: '',
-		confirmationCode: ''
-	}, 'manual mode should preserve lpac SM-DP+ and matching-ID arguments');
-	matchingInput.value = '';
-	assert.strictEqual(downloadView.collectRequest().matchingId, '',
-		'manual mode should allow the optional matching ID to be empty');
-	matchingInput.value = 'INVALID/MATCHING-ID';
-	assert.throws(function() { downloadView.collectRequest(); },
-		/The matching ID is invalid/,
-		'a nonempty manual matching ID should retain strict validation');
-	matchingInput.value = 'MATCHING-ID';
-	smdpInput.value = '[2001:db8::1]:65535';
-	assert.strictEqual(downloadView.collectRequest().smdp, '[2001:db8::1]:65535',
-		'the frontend should accept the bracketed IPv6 form accepted by the RPC');
-	[ 'smdp.example.com:0', 'smdp.example.com:65536',
-		'smdp.example.com/path' ].forEach(function(value) {
-		smdpInput.value = value;
-		assert.throws(function() { downloadView.collectRequest(); },
-			/The SM-DP\+ address is invalid/,
-			`${value} should be rejected before invoking the RPC`);
-	});
-	smdpInput.value = 'smdp.example.com:443';
+	assert.strictEqual(downloadById('lpac-download-manual-fields'), undefined,
+		'the removed Manual Parameters section must not be rendered');
+	assert.strictEqual(downloadById('lpac-smdp'), undefined,
+		'the removed manual SM-DP+ input must not be rendered');
+	assert.strictEqual(downloadById('lpac-matching-id'), undefined,
+		'the removed manual matching-ID input must not be rendered');
+	assert.deepStrictEqual(findAll(mode, function(node) {
+		return node.tag === 'option';
+	}).map(function(node) { return node.attrs.value; }), [ 'activation', 'discovery' ],
+	'the download method selector should expose only activation/QR and SM-DS discovery');
 
 	mode.value = 'discovery';
 	downloadView.updateMode();
 	assert.strictEqual(activationFields.style.display, 'none');
-	assert.strictEqual(manualFields.style.display, 'none');
 	assert.strictEqual(discoveryFields.style.display, '',
 		'SM-DS mode should reveal only discovery controls');
 	assert.strictEqual(textContent(downloadById('lpac-download-button')),
@@ -1065,17 +1095,17 @@ async function testDownloadView() {
 		'button', 'Retrieve preview')[0];
 	assert.ok(discoveredReviewButton && !discoveredReviewButton.disabled,
 		'a discovered order should offer direct preview retrieval');
-	discoveredReviewButton.attrs.click();
-	assert.strictEqual(modal.title, 'Review discovered profile');
 	const discoveredDownloadCalls = [];
 	lpac.downloadDiscoveredProfile = function(entryId, confirmationCode) {
 		discoveredDownloadCalls.push([ entryId, confirmationCode ]);
 		return Promise.resolve({ success: false, error: 'entry_unavailable' });
 	};
-	const discoveredConfirm = byText(modal.content, 'button', 'Retrieve preview')[0];
-	await discoveredConfirm.attrs.click();
+	modal = null;
+	await discoveredReviewButton.attrs.click();
 	assert.deepStrictEqual(discoveredDownloadCalls, [ [ 'D'.repeat(32), '' ] ],
 		'direct discovered download should submit only the opaque entry token and confirmation code');
+	assert.strictEqual(modal, null,
+		'discovered preview retrieval should not open a redundant confirmation dialog');
 	assert.strictEqual(downloadView.discoveryEntries.length, 0,
 		'an expired discovered capability should clear stale browser results');
 	downloadById('lpac-imei').value = '';
@@ -1084,8 +1114,6 @@ async function testDownloadView() {
 	downloadView.updateMode();
 	assert.strictEqual(activationFields.style.display, '',
 		'activation mode should restore activation-code controls');
-	assert.strictEqual(manualFields.style.display, 'none',
-		'activation mode should hide manual controls');
 	const activationInput = downloadById('lpac-activation-code');
 	activationInput.value = 'LPA:1$smdp.example.com$';
 	assert.strictEqual(downloadView.collectRequest().activationCode,
@@ -1113,7 +1141,7 @@ async function testDownloadView() {
 		/requires a confirmation code/,
 		'a confirmation-required activation code should identify its missing input');
 	const notificationCountBeforeConfirmation = notifications.length;
-	downloadView.showDownloadModal();
+	downloadView.startValidatedDownload();
 	assert.strictEqual(notifications.length, notificationCountBeforeConfirmation + 1,
 		'the missing confirmation code should produce one validation notification');
 	assert.strictEqual(downloadById('lpac-confirmation-code').attrs['aria-invalid'], 'true',
@@ -1306,23 +1334,15 @@ async function testDownloadView() {
 		});
 	};
 
-	downloadView.showDownloadModal();
-	assert.strictEqual(modal.title, 'Review eSIM profile',
-		'Download should require preview-session confirmation before invoking lpac');
-	assert.ok(!textContent(modal.content).includes('QR-MATCHING-ID'),
-		'the confirmation dialog should not echo the activation secret');
-	assert.ok(!textContent(modal.content).includes('1234'),
-		'the confirmation dialog should not echo the confirmation code');
-
-	const confirmButton = byText(modal.content, 'button', 'Retrieve preview')[0];
-	assert.ok(confirmButton, 'the confirmation dialog should expose Retrieve preview');
-	const starting = confirmButton.attrs.click();
+	modal = null;
+	const starting = downloadById('lpac-download-button').attrs.click();
 	assert.strictEqual(downloadView.downloadStarting, true,
-		'the view should record the in-flight start request');
-	const startingModal = modal;
-	downloadView.showDownloadModal();
-	assert.strictEqual(modal, startingModal,
-		'a repeated click while starting must not replace the progress modal');
+		'the Retrieve profile preview button should start the request immediately');
+	assert.strictEqual(modal, null,
+		'validated preview retrieval should not open a redundant confirmation dialog');
+	const repeatedStart = downloadView.startValidatedDownload();
+	assert.strictEqual(repeatedStart, undefined,
+		'a repeated click while starting must not submit another request');
 	const ownedDecisionToken = 'A'.repeat(32);
 	resolveDownloadStart({
 		success: true,
@@ -1335,9 +1355,8 @@ async function testDownloadView() {
 	});
 	await starting;
 	assert.deepStrictEqual(downloadArguments, [
-		'activation', 'LPA:1$qr.example.com$QR-MATCHING-ID$$1', '', '',
-		'490154203237518', '1234'
-	], 'the browser should pass the complete activation code and optional flags');
+		'LPA:1$qr.example.com$QR-MATCHING-ID$$1', '490154203237518', '1234'
+	], 'the browser should pass only the activation code and optional typed fields');
 	assert.strictEqual(downloadView.activeJob, 17,
 		'the returned asynchronous job identifier should be retained');
 	assert.strictEqual(downloadView.activeJobOrigin, 'owned',
@@ -1350,9 +1369,9 @@ async function testDownloadView() {
 		'the UI should retain inline progress while lpac runs');
 	assert.strictEqual(downloadById('lpac-download-button').disabled, true,
 		'the active job should disable duplicate download attempts');
-	downloadView.showDownloadModal();
+	downloadView.startValidatedDownload();
 	assert.strictEqual(modal, null,
-		'a repeated click for an active job must not open a second confirmation modal');
+		'a repeated click for an active job must not start another preview request');
 
 	const statuses = [
 		{ success: false, error: 'transport_error' },
@@ -1476,10 +1495,7 @@ async function testDownloadView() {
 		});
 	};
 	await downloadView.startDownload({
-		mode: 'activation',
 		activationCode: 'LPA:1$second.example.com$SECOND',
-		smdp: '',
-		matchingId: '',
 		imei: '',
 		confirmationCode: ''
 	});
@@ -1511,10 +1527,7 @@ async function testDownloadView() {
 		return Promise.resolve({ success: true, data: { status: 'idle' } });
 	};
 	await downloadView.startDownload({
-		mode: 'activation',
 		activationCode: 'LPA:1$second.example.com$SECOND',
-		smdp: '',
-		matchingId: '',
 		imei: '',
 		confirmationCode: ''
 	});
@@ -1545,10 +1558,7 @@ async function testDownloadView() {
 			: { success: false, error: 'job_not_found' });
 	};
 	await downloadView.startDownload({
-		mode: 'activation',
 		activationCode: speedtestCode,
-		smdp: '',
-		matchingId: '',
 		imei: '',
 		confirmationCode: ''
 	});
@@ -1599,10 +1609,7 @@ async function testDownloadView() {
 		});
 	};
 	await downloadView.startDownload({
-		mode: 'activation',
 		activationCode: speedtestCode,
-		smdp: '',
-		matchingId: '',
 		imei: '',
 		confirmationCode: ''
 	});
@@ -1667,10 +1674,7 @@ async function testDownloadView() {
 			: { success: true, data: { status: 'idle' } });
 	};
 	await downloadView.startDownload({
-		mode: 'activation',
 		activationCode: speedtestCode,
-		smdp: '',
-		matchingId: '',
 		imei: '',
 		confirmationCode: ''
 	});
@@ -1699,10 +1703,7 @@ async function testDownloadView() {
 		return Promise.resolve({ success: true, data: { job_id: 99, status: 'running' } });
 	};
 	await downloadView.startDownload({
-		mode: 'activation',
 		activationCode: speedtestCode,
-		smdp: '',
-		matchingId: '',
 		imei: '',
 		confirmationCode: ''
 	});
@@ -1710,9 +1711,9 @@ async function testDownloadView() {
 		'the start invariant should reject direct or stale handlers after an unknown outcome');
 	const blockedModal = modal;
 	const blockedModalNotifications = notifications.length;
-	downloadView.showDownloadModal();
+	downloadView.startValidatedDownload();
 	assert.strictEqual(modal, blockedModal,
-		'a direct modal handler must not bypass the unknown-outcome block');
+		'the validated start handler must not bypass the unknown-outcome block');
 	assert.strictEqual(notifications.length, blockedModalNotifications + 1,
 		'a blocked modal attempt should repeat the verification guidance');
 	downloadView.clearForm();

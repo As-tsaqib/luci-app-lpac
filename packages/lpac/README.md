@@ -38,9 +38,8 @@ work.
 
 The compatibility bundle enables the MBIM slot-mapping bypass by default.
 It also selects the MBIM APDU backend by default for new installations.
-When PC/SC is selected, the wrapper exports the optional reader interface
-stored in `lpac.pcsc.interface`; an empty value keeps lpac's first-reader
-behavior.
+PC/SC compilation is disabled by default and is not managed by the LuCI
+application on this branch.
 LuCI exposes the bypass at
 `Modem → eSIM Manager → Settings → MBIM backend`.
 Set `lpac.mbim.skip_slot_mapping=0` on devices that require lpac to query and

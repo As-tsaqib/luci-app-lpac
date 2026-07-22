@@ -17,20 +17,20 @@ wrapper.
   icons are displayed when valid; otherwise the list uses a CSS-only SIM-card
   fallback without contacting an external icon service.
 - Discover pending profile orders through SM-DS and download one directly, or
-  use a complete LPA activation code, locally decoded QR image, or manual lpac
-  parameters; every path pauses for provider-metadata review before installation.
+  use a complete LPA activation code or locally decoded QR image; every path
+  pauses for provider-metadata review before installation.
 - Display validated PNG/JPEG icons from installed and pre-install metadata.
-- Process provider notifications singly, all, or by selection, and explicitly
-  remove one, selected, or every local eUICC record, including sequence zero.
-- Configure the official AT, uqmi, MBIM, and PC/SC backends through validated
-  RPC methods, with native detection of AT ports and PC/SC readers.
+- Process all valid provider notifications sequentially or explicitly remove
+  every local eUICC notification record.
+- Configure the official AT, uqmi, and MBIM backends through validated RPC
+  methods, with bounded detection of AT, QMI, and MBIM ports.
 
-The Download view mirrors `lpac profile download`: it accepts a complete LPA
-string and the non-interactive upstream SM-DP+, matching-ID, IMEI, and
-confirmation-code parameters. Harmless whitespace and Unicode formatting marks
-copied around the activation string are removed, while formatting marks inside
-the activation data remain invalid. This accommodates copy-and-paste artifacts
-without silently changing the credential itself.
+The Download view accepts a complete LPA string plus optional IMEI and
+confirmation-code values. Manual SM-DP+ and matching-ID fields are intentionally
+not exposed. Harmless whitespace and Unicode formatting marks copied around the
+activation string are removed, while formatting marks inside the activation
+data remain invalid. This accommodates copy-and-paste artifacts without silently
+changing the credential itself.
 
 QR images are decoded locally in the browser and are never uploaded to the
 router. The view presents two explicit actions: a normal PNG, JPEG, or WebP file
@@ -38,6 +38,10 @@ picker without a capture hint, and a separate camera action using
 `capture="environment"`. The latter is a browser hint rather than a live video
 scanner, so a browser may still present its normal chooser. Both paths share the
 same 8 MiB file, 40-megapixel image, bounded-canvas, and activation-code checks.
+
+After validation, Retrieve profile preview starts the supervised lpac request
+directly. There is no redundant pre-preview confirmation; the later dialog that
+shows provider metadata remains the explicit Install or Cancel decision.
 
 Every request uses `lpac profile download -p`. The backend keeps that same
 authenticated process paused at lpac's preview prompt and accepts one explicit
@@ -65,15 +69,14 @@ inherited rather than introduced by the LuCI page. The merged
 [estkme-group/lpac#444](https://github.com/estkme-group/lpac/pull/444) hardens
 handling of an untrusted server response but does not enable TLS verification.
 
-Process sends one pending notification to its provider and optionally removes
-the eUICC record after successful delivery. Process all and Process selected
-invoke the chosen single operations in sequence, stopping at the first failure
-so partial completion remains explicit. Retrieval failure, unknown provider
+Process all invokes the typed single-sequence backend operation in order and
+stops at the first failure so partial completion remains explicit. It may remove
+each eUICC record after successful delivery. Retrieval failure, unknown provider
 outcome, and successful provider delivery followed by local removal failure are
-reported separately. Remove, Remove selected, and Remove all never contact a
-provider; their confirmations state that discarding an unprocessed local record
-can leave provider state out of sync. The bundled notification patches support
-sequence `0` and reject non-canonical or overflowing uint32 arguments.
+reported separately. Remove all never contacts a provider; its confirmation
+states that discarding unprocessed local records can leave provider state out of
+sync. The bundled notification patches support sequence `0` and reject
+non-canonical or overflowing uint32 arguments.
 
 SM-DS discovery uses detailed lpac output carrying each RSP server and EventID.
 The EventID and optional discovery IMEI remain only in rpcd memory behind a
@@ -94,17 +97,20 @@ This release branch requires the bundled `lpac >= 2.3.0.444-r1`. OpenWrt
 25.12 requires a compatible backport or custom package, while the stock 24.10
 lpac is too old. The application itself is architecture-independent.
 
-When driver discovery succeeds, Settings offers the reported AT, uqmi, MBIM,
-or PC/SC backends. Native `driver apdu list` enumeration detects stable AT
-links below `/dev/serial/by-id`; the backend supplements common OpenWrt
-`ttyUSB`, `ttyACM`, and `wwan…at…` paths through strict patterns. PC/SC reader
-indices come from lpac/pcscd. Enumeration does not open an eUICC channel. Safe
-AT and MBIM device paths below `/dev` and canonical PC/SC indices are accepted.
+When driver discovery succeeds, Settings offers the reported AT, uqmi, or MBIM
+backends. Native `driver apdu list` enumeration detects stable AT links below
+`/dev/serial/by-id`; the backend supplements common OpenWrt `ttyUSB`, `ttyACM`,
+and `wwan…at…` paths through strict patterns. QMI and MBIM detection reads only
+canonical `/dev` names and the kernel binding of `cdc-wdmN` devices from sysfs;
+it neither executes lpac nor opens the modem. Only the detection button matching
+the selected APDU backend is enabled, and no button is enabled without a valid
+selection.
 The release branch also manages the upstream MBIM slot-mapping bypass. It is
 enabled by default for compatibility and can be disabled for multi-slot
 devices that require normal slot selection.
-The active uqmi backend remains restricted to `/dev/cdc-wdmN`; the bundled
-package fixes client setup so the configured control-device path is honored.
+The active uqmi backend accepts canonical `/dev/cdc-wdmN` and
+`/dev/wwanNqmiN` control paths; the bundled package fixes client setup so the
+configured device path is honored.
 
 ## Architecture
 
@@ -121,8 +127,8 @@ The browser calls a small typed `luci.lpac` rpcd/ucode facade. The facade:
   metadata to the tab holding the one-shot decision capability;
 - keeps discovered EventIDs behind expiring one-shot capabilities instead of
   returning matching credentials to the browser;
-- invokes native AT/PCSC device enumerators with a fixed executable,
-  environment assignments, and argv, then allowlists their output;
+- invokes the native AT device enumerator with fixed argv and allowlists its
+  output; QMI/MBIM detection only reads strict device names and sysfs bindings;
 - changes the default SM-DP+ address only through a fixed typed RPC and checks
   the result through a fresh normalized `chip info` readback;
 - does not return raw APDU, HTTP, activation-code, or confirmation-code data.
@@ -208,8 +214,8 @@ eUICC to reject deletion of an enabled profile and normalizes the resulting
 lpac error.
 
 Settings writes update only the official options managed by this application,
-including the selected PC/SC interface and the merged upstream MBIM
-skip-slot-mapping option on this release branch.
+including the merged upstream MBIM skip-slot-mapping option on this release
+branch.
 Additional package- or vendor-specific UCI options in the named sections are
 left intact.
 
@@ -243,7 +249,6 @@ explicit owner approval and before/after profile and network-state observations.
 Read and write validation was performed on OpenWrt 25.12.5 with a Fibocom
 L850-GL. A disposable Speedtest profile was decoded and installed through both
 QR controls using an earlier compatible bundle. This validates that combination
-only. SM-DS provider discovery/download, PC/SC hardware enumeration,
-multi-select notification operations, standalone Remove all, and persistent
-default-SM-DP+ still require separately authorized live checks after a final CI
-artifact is reviewed.
+only. SM-DS provider discovery/download, QMI/MBIM port detection, standalone
+Remove all, and persistent default-SM-DP+ still require separately authorized
+live checks after a final CI artifact is reviewed.

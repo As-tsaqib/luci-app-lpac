@@ -169,7 +169,7 @@ return view.extend({
 				_('This changes persistent state on the eUICC, not a LuCI setting. The address remains configured after a router reboot.')
 			]),
 			E('p', { 'class': 'cbi-value-description', 'role': 'note' }, [
-				_('A manual profile download with an empty SM-DP+ server field uses this default address. Clearing the eUICC default is not supported by this form.')
+				_('Compatible lpac operations that omit an explicit SM-DP+ address use this default. Clearing the eUICC default is not supported by this form.')
 			]),
 			E('div', { 'class': 'right' }, [
 				E('button', {
@@ -220,7 +220,7 @@ return view.extend({
 				_('New address'), address
 			]),
 			E('p', { 'class': 'alert-message warning', 'role': 'alert' }, [
-				_('Confirming writes persistent eUICC state and changes which server manual downloads use when no SM-DP+ address is supplied.')
+				_('Confirming writes persistent eUICC state and changes the default server used by compatible lpac operations that omit an explicit SM-DP+ address.')
 			]),
 			E('div', { 'class': 'right' }, [
 				E('button', {

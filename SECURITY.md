@@ -54,17 +54,17 @@ bundled lpac v2.3.0 build disables curl peer and hostname verification. Profile
 download and provider-notification processing therefore require a trusted
 provider source and network. Notification batches run one record at a time and
 stop on the first failure; unknown outcomes are not automatically retried.
-Local Remove, Remove selected, and Remove all never contact a provider. Their
-confirmations warn that deleting unprocessed eUICC records can leave provider
-state out of sync.
+Remove all never contacts a provider. Its confirmation warns that deleting
+unprocessed eUICC records can leave provider state out of sync.
 
 SM-DS EventIDs and the optional discovery IMEI are provider credentials. They
 remain in bounded rpcd memory for at most five minutes and are represented to
 the browser only by random opaque capabilities. A successful discovered
-download start consumes its capability. Native AT and PC/SC detection invokes
-only fixed lpac enumeration argv; returned paths, indices, and names are
-allowlisted before reaching the browser, and enumeration does not open an
-eUICC channel.
+download start consumes its capability. Native AT detection invokes only fixed
+lpac enumeration argv. QMI and MBIM detection reads strict `/dev`
+names and `cdc-wdmN` sysfs driver bindings without executing a process, opening
+the modem, or sending a protocol request. Returned paths and labels are
+allowlisted before reaching the browser.
 
 Changing the default SM-DP+ address writes persistent eUICC state. The UI uses
 a typed fixed-argv RPC, requires an old/new confirmation, and claims success
