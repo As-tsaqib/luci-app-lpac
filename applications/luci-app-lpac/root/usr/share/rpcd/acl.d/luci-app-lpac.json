@@ -6,6 +6,7 @@
 				"luci.lpac": [
 					"get_version",
 					"get_drivers",
+					"list_apdu_devices",
 					"get_info",
 					"list_profiles",
 					"list_notifications",
@@ -21,10 +22,13 @@
 					"disable_profile",
 					"nickname_profile",
 					"delete_profile",
+					"download_discovered_profile",
 					"download_profile",
+					"discover_profiles",
 					"respond_download_preview",
 					"process_notification",
 					"remove_notification",
+					"remove_all_notifications",
 					"set_default_smdp",
 					"set_config"
 				]

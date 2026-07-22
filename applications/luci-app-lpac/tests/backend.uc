@@ -22,6 +22,9 @@ function default_config() {
 			device: '/dev/ttyUSB2',
 			debug: '0'
 		},
+		pcsc: {
+			interface: ''
+		},
 		uqmi: {
 			device: '/dev/cdc-wdm0',
 			debug: '0'
@@ -81,6 +84,7 @@ function reset() {
 	global.TEST_LPAC_ACCESS = true;
 	global.TEST_ACCESS_FAIL_PATH = null;
 	global.TEST_ACCESS_CALLS = [];
+	global.TEST_GLOB_RESULTS = {};
 	global.TEST_PROCESS_THROW = false;
 	global.TEST_PROCESS_NULL = false;
 	global.TEST_PROCESS_PID_THROW = false;
@@ -280,6 +284,102 @@ check(!result.success && result.error == 'invalid_response',
 reset();
 global.TEST_EXEC_REPLY = {
 	code: 0,
+	stdout: sprintf('%J\n', {
+		type: 'driver',
+		payload: {
+			env: 'LPAC_APDU_AT_DEVICE',
+			data: [
+				{ env: '/dev/serial/by-id/usb-Test_Modem-if00', name: 'Test modem' },
+				{ env: '/dev/serial/../ttyUSB0', name: 'Traversal' }
+			]
+		}
+	})
+};
+global.TEST_GLOB_RESULTS = {
+	'/dev/ttyUSB*': [ '/dev/ttyUSB0', '/dev/ttyUSB0;invalid' ],
+	'/dev/ttyACM*': [ '/dev/ttyACM1' ],
+	'/dev/wwan*at*': [ '/dev/wwan0at0', '/dev/wwan-at' ]
+};
+result = invoke('list_apdu_devices', { backend: 'at' });
+same(result.data, {
+	backend: 'at',
+	devices: [
+		{
+			value: '/dev/serial/by-id/usb-Test_Modem-if00',
+			name: 'Test modem'
+		},
+		{ value: '/dev/ttyUSB0', name: 'ttyUSB0' },
+		{ value: '/dev/ttyACM1', name: 'ttyACM1' },
+		{ value: '/dev/wwan0at0', name: 'wwan0at0' }
+	]
+}, 'AT detection combines safe native links with strict OpenWrt device fallbacks');
+check(global.TEST_LAST_CALL.request.command == '/usr/bin/env',
+	'APDU detection uses the fixed env launcher');
+same(global.TEST_LAST_CALL.request.params, [
+	'LPAC_APDU=at', 'LPAC_HTTP=curl', '/usr/lib/lpac',
+	'driver', 'apdu', 'list'
+], 'AT detection uses fixed native lpac argv and a validated backend assignment');
+
+reset();
+const maximum_native_at_devices = [];
+for (let i = 0; i < 64; i++)
+	push(maximum_native_at_devices, {
+		env: `/dev/serial/by-id/usb-Test_Modem-${i}`,
+		name: `Test modem ${i}`
+	});
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: sprintf('%J\n', {
+		type: 'driver',
+		payload: {
+			env: 'LPAC_APDU_AT_DEVICE',
+			data: maximum_native_at_devices
+		}
+	})
+};
+global.TEST_GLOB_RESULTS = {
+	'/dev/ttyUSB*': [ '/dev/ttyUSB0', '/dev/ttyUSB1' ]
+};
+result = invoke('list_apdu_devices', { backend: 'at' });
+check(result.success && length(result.data.devices) == 64 &&
+	index(map(result.data.devices, function(device) { return device.value; }),
+		'/dev/ttyUSB0') < 0,
+	'AT fallback detection cannot exceed the 64-device native result cap');
+
+reset();
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: sprintf('%J\n', {
+		type: 'driver',
+		payload: {
+			env: 'LPAC_APDU_PCSC_DRV_IFID',
+			data: [
+				{ env: '0', name: 'USB smart-card reader' },
+				{ env: '01', name: 'Non-canonical index' },
+				{ env: '1025', name: 'Out-of-range index' }
+			]
+		}
+	})
+};
+result = invoke('list_apdu_devices', { backend: 'pcsc' });
+same(result.data, {
+	backend: 'pcsc',
+	devices: [ { value: '0', name: 'USB smart-card reader' } ]
+}, 'PC/SC detection returns canonical bounded reader indices and safe names');
+same(global.TEST_LAST_CALL.request.params, [
+	'LPAC_APDU=pcsc', 'LPAC_HTTP=curl', '/usr/lib/lpac',
+	'driver', 'apdu', 'list'
+], 'PC/SC detection cannot inject an alternate executable or driver command');
+
+reset();
+result = invoke('list_apdu_devices', { backend: 'mbim' });
+check(!result.success && result.error == 'invalid_argument' &&
+	global.TEST_LAST_CALL === null,
+	'device detection rejects every backend without a native enumerator');
+
+reset();
+global.TEST_EXEC_REPLY = {
+	code: 0,
 	stdout: terminal({
 		eidValue: '89012345678901234567890123456789',
 		EuiccConfiguredAddresses: {},
@@ -443,6 +543,166 @@ check(result.success && length(result.data) == 2 &&
 	'notification list preserves the full uint32 sequence range');
 
 reset();
+const discovery_secret = 'secret-event-id-never-returned';
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: terminal([
+		{ eventId: discovery_secret, rspServerAddress: 'rsp.example.com' },
+		{ eventId: discovery_secret, rspServerAddress: 'rsp.example.com' },
+		{ eventId: 'second-secret', rspServerAddress: 'rsp2.example.com:443' }
+	])
+};
+result = invoke('discover_profiles', { smds: '', imei: '' });
+check(result.success && length(result.data) == 2 &&
+	result.data[0].smdp == 'rsp.example.com' &&
+	result.data[1].smdp == 'rsp2.example.com:443',
+	'discovery returns deduplicated validated SM-DP+ display addresses');
+check(match(result.data[0].entry_id, /^[A-Za-z0-9_-]{32}$/) !== null &&
+	match(result.data[1].entry_id, /^[A-Za-z0-9_-]{32}$/) !== null &&
+	result.data[0].entry_id != result.data[1].entry_id &&
+	index(sprintf('%J', result), discovery_secret) < 0 &&
+	index(sprintf('%J', result), 'second-secret') < 0,
+	'discovery replaces EventIDs with distinct opaque in-memory tokens');
+same(global.TEST_LAST_CALL.request.params, [
+	'-n', '/var/run/luci-lpac.lock', '/usr/bin/lpac',
+	'profile', 'discovery', '-j'
+], 'default discovery uses detailed JSON without injecting a default SM-DS flag');
+check(global.TEST_RANDOM_OPEN_COUNT == 2 &&
+	global.TEST_RANDOM_CLOSE_COUNT == 2,
+	'each unique discovery result receives fresh randomness from a closed handle');
+const first_discovery_timer = global.TEST_TIMERS[0];
+check(length(global.TEST_TIMERS) == 1 &&
+	first_discovery_timer.timeout == 300000,
+	'discovery secrets receive a five-minute expiry watchdog');
+
+result = invoke('discover_profiles', { smds: '', imei: '' });
+const expiring_entry_id = result.data[0].entry_id;
+const replacement_discovery_timer = global.TEST_TIMERS[1];
+check(result.success && first_discovery_timer.cancelled &&
+	replacement_discovery_timer.timeout == 300000,
+	'a replacement discovery cancels the previous secret-expiry watchdog');
+result = invoke('download_discovered_profile', {
+	entry_id: expiring_entry_id + '\n', confirmation_code: ''
+});
+check(!result.success && result.error == 'invalid_argument',
+	'a control-suffixed discovery token is rejected at the RPC boundary');
+replacement_discovery_timer.callback();
+result = invoke('download_discovered_profile', {
+	entry_id: expiring_entry_id, confirmation_code: ''
+});
+check(!result.success && result.error == 'entry_unavailable' &&
+	global.TEST_LAST_PROCESS === null,
+	'the expiry watchdog hard-deletes EventIDs and retained IMEI values');
+
+reset();
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: terminal([ {
+		eventId: 'ipv6-event',
+		rspServerAddress: '[2001:db8::2]:8443'
+	} ])
+};
+result = invoke('discover_profiles', {
+	smds: '[2001:db8::1]:443', imei: '1234567890123456'
+});
+check(result.success && index(sprintf('%J', result), '1234567890123456') < 0,
+	'discovery retains but never returns the validated IMEI');
+same(global.TEST_LAST_CALL.request.params, [
+	'-n', '/var/run/luci-lpac.lock', '/usr/bin/lpac',
+	'profile', 'discovery', '-j', '-s', '[2001:db8::1]:443',
+	'-i', '1234567890123456'
+], 'SM-DS and IMEI remain separate fixed discovery argv elements');
+
+reset();
+for (let args in [
+	{ smds: '-a', imei: '' },
+	{ smds: 'smds.example.com/path', imei: '' },
+	{ smds: 'smds_example.com', imei: '' },
+	{ smds: 'smds.example.com:0', imei: '' },
+	{ smds: '999.999.999.999', imei: '' },
+	{ smds: 'smds.example.com', imei: '1234567890123' },
+	{ smds: 'smds.example.com', imei: '12345678901234\n' }
+]) {
+	result = invoke('discover_profiles', args);
+	check(!result.success && result.error == 'invalid_argument' &&
+		global.TEST_LAST_CALL === null,
+		'malformed discovery host, port, IMEI, or argv injection is rejected');
+}
+
+for (let payload in [
+	{}, [ 'rsp.example.com' ], [ {} ],
+	[ { eventId: '', rspServerAddress: 'rsp.example.com' } ],
+	[ { eventId: 'bad\nevent', rspServerAddress: 'rsp.example.com' } ],
+	[ { eventId: make_text('E', 4097), rspServerAddress: 'rsp.example.com' } ],
+	[ { eventId: 'event', rspServerAddress: 'https://rsp.example.com/path' } ]
+]) {
+	reset();
+	global.TEST_EXEC_REPLY = { code: 0, stdout: terminal(payload) };
+	result = invoke('discover_profiles', { smds: '', imei: '' });
+	check(!result.success && result.error == 'invalid_response' &&
+		index(sprintf('%J', result), 'bad\nevent') < 0,
+		'malformed or legacy detailed discovery payload is rejected');
+}
+
+reset();
+const excessive_discovery_results = [];
+for (let i = 0; i < 65; i++)
+	push(excessive_discovery_results, {
+		eventId: `event-${i}`,
+		rspServerAddress: `rsp${i}.example.com`
+	});
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: terminal(excessive_discovery_results)
+};
+result = invoke('discover_profiles', { smds: '', imei: '' });
+check(!result.success && result.error == 'invalid_response' &&
+	global.TEST_RANDOM_OPEN_COUNT == 0,
+	'a compromised lpac response cannot retain more than 64 discovery entries');
+
+reset();
+global.TEST_RANDOM_OPEN_FAIL = true;
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: terminal([ {
+		eventId: discovery_secret, rspServerAddress: 'rsp.example.com'
+	} ])
+};
+result = invoke('discover_profiles', { smds: '', imei: '' });
+check(!result.success && result.error == 'execution_failed' &&
+	index(sprintf('%J', result), discovery_secret) < 0 &&
+	global.TEST_RANDOM_OPEN_COUNT == 8,
+	'discovery fails closed without exposing secrets when entropy is unavailable');
+
+reset();
+global.TEST_TIMER_NULL_AT = 1;
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: terminal([ {
+		eventId: discovery_secret, rspServerAddress: 'rsp.example.com'
+	} ])
+};
+result = invoke('discover_profiles', { smds: '', imei: '' });
+check(!result.success && result.error == 'execution_failed' &&
+	!('data' in result) && index(sprintf('%J', result), discovery_secret) < 0,
+	'discovery returns no token when expiry-timer creation fails');
+
+reset();
+global.TEST_TIMER_SET_FAIL = true;
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: terminal([ {
+		eventId: discovery_secret, rspServerAddress: 'rsp.example.com'
+	} ])
+};
+result = invoke('discover_profiles', { smds: '', imei: '' });
+check(!result.success && result.error == 'execution_failed' &&
+	!('data' in result) && length(global.TEST_TIMERS) == 1 &&
+	global.TEST_TIMERS[0].cancelled &&
+	index(sprintf('%J', result), discovery_secret) < 0,
+	'discovery erases secrets when the expiry watchdog cannot be armed');
+
+reset();
 global.TEST_EXEC_REPLY = { code: 0, stdout: terminal(null) };
 result = invoke('set_default_smdp', { address: 'rsp.default.example.com:443' });
 check(result.success && result.data === null,
@@ -484,6 +744,16 @@ check(!invoke('remove_notification', { seq: '00' }).success &&
 	!invoke('remove_notification', { seq: 0 }).success &&
 	!invoke('remove_notification', { seq: '4294967296' }).success,
 	'invalid notification sequences are rejected');
+
+reset();
+global.TEST_EXEC_REPLY = { code: 0, stdout: terminal(null) };
+result = invoke('remove_all_notifications');
+check(result.success && result.data === null,
+	'standalone Remove all normalizes a successful local-only operation');
+same(global.TEST_LAST_CALL.request.params,
+	[ '-n', '/var/run/luci-lpac.lock', '/usr/bin/lpac',
+		'notification', 'remove', '-a' ],
+	'Remove all maps only to the fixed native lpac -a flag');
 
 reset();
 global.TEST_EXEC_REPLY = { code: 0, stdout: terminal(null) };
@@ -707,6 +977,23 @@ check(result.success && global.TEST_UCI.at.device == config.at.device,
 
 reset();
 config = default_config();
+config.global.apdu_backend = 'pcsc';
+config.pcsc.interface = '7';
+result = invoke('set_config', { config });
+check(result.success && global.TEST_UCI.pcsc.interface == '7',
+	'a detected canonical PC/SC reader index is validated and committed');
+
+for (let interface_value in [ '01', '-1', '1025', '1\n', 1 ]) {
+	reset();
+	config = default_config();
+	config.pcsc.interface = interface_value;
+	result = invoke('set_config', { config });
+	check(!result.success && result.error == 'invalid_config',
+		'non-canonical or out-of-range PC/SC reader indices are rejected');
+}
+
+reset();
+config = default_config();
 config.global.apdu_backend = 'uqmi';
 config.uqmi.device = '/dev/wwan0qmi0';
 result = invoke('set_config', { config });
@@ -851,8 +1138,9 @@ emit_download_output(substr(preview_event, 9));
 result = owner_status(activation_job_id, activation_token);
 check(result.success && result.data.phase == 'awaiting_confirmation' &&
 	result.data.preview.serviceProviderName == 'Preview Carrier' &&
-	!('icon' in result.data.preview) && !('iconType' in result.data.preview),
-	'fragmented metadata yields a normalized icon-free preview');
+	result.data.preview.iconType == 'png' &&
+	result.data.preview.icon == preview_png,
+	'fragmented metadata yields a bounded normalized PNG preview icon');
 check(global.TEST_TIMERS[1].timeout == 120000 &&
 	global.TEST_TIMERS[0].timeout == 130000,
 	'prompt grants a fresh full preview window plus cancellation grace');
@@ -1225,5 +1513,72 @@ check(invoke('get_download_status', { job_id: 0 }).success &&
 	!invoke('get_download_status', { job_id: '1' }).success &&
 	!invoke('get_download_status', { job_id: 2147483648 }).success,
 	'current-job sentinel is accepted while malformed or out-of-range IDs are rejected');
+
+reset();
+const discovered_event_secret = 'DISCOVERY-EVENT-SECRET';
+const discovered_imei = '1234567890123456';
+global.TEST_EXEC_REPLY = {
+	code: 0,
+	stdout: terminal([ {
+		eventId: discovered_event_secret,
+		rspServerAddress: 'discovered.example.com'
+	} ])
+};
+result = invoke('discover_profiles', {
+	smds: 'lpa.ds.gsma.com', imei: discovered_imei
+});
+const discovered_entry_id = result.data[0].entry_id;
+const discovered_expiry_timer = global.TEST_TIMERS[0];
+check(result.success && index(sprintf('%J', result), discovered_event_secret) < 0 &&
+	index(sprintf('%J', result), discovered_imei) < 0,
+	'discovery exposes only an opaque entry ID and safe server display value');
+
+global.TEST_PROCESS_NULL = true;
+result = invoke('download_discovered_profile', {
+	entry_id: discovered_entry_id,
+	confirmation_code: 'discovery-confirmation-secret'
+});
+check(!result.success && result.error == 'execution_failed' &&
+	index(sprintf('%J', result), discovered_event_secret) < 0,
+	'a failed discovered-profile spawn returns no hidden EventID or IMEI');
+check(!discovered_expiry_timer.cancelled &&
+	discovered_expiry_timer.timeout == 300000,
+	'a failed spawn restores the claimed discovery entry with its original expiry');
+
+global.TEST_PROCESS_NULL = false;
+result = invoke('download_discovered_profile', {
+	entry_id: discovered_entry_id,
+	confirmation_code: 'discovery-confirmation-secret'
+});
+check(result.success && result.data.status == 'running' &&
+	discovered_expiry_timer.cancelled,
+	'a restored discovery capability can be consumed exactly once');
+const discovered_job_id = result.data.job_id;
+const discovered_token = result.data.decision_token;
+const discovered_argv = global.TEST_LAST_PROCESS.arguments;
+const discovered_lpac_index = index(discovered_argv, '/usr/bin/lpac');
+same(slice(discovered_argv, discovered_lpac_index), [
+	'/usr/bin/lpac', 'profile', 'download', '-p',
+	'-s', 'discovered.example.com', '-m', discovered_event_secret,
+	'-i', discovered_imei, '-c', 'discovery-confirmation-secret'
+], 'discovered download reuses hidden EventID, server, and original IMEI as argv');
+check(index(sprintf('%J', result), discovered_event_secret) < 0 &&
+	index(sprintf('%J', result), discovered_imei) < 0,
+	'discovered start response contains only job ownership state');
+
+emit_download_output(download_progress('preview', 'y/n'));
+invoke('respond_download_preview', {
+	job_id: discovered_job_id,
+	decision_token: discovered_token,
+	accept: false
+});
+emit_download_output(terminal('', -1, 'cancelled'));
+global.TEST_LAST_PROCESS.output(DOWNLOAD_EXIT_FAILED);
+end_download_output();
+result = invoke('download_discovered_profile', {
+	entry_id: discovered_entry_id, confirmation_code: ''
+});
+check(!result.success && result.error == 'entry_unavailable',
+	'a successfully spawned discovered entry is permanently consumed');
 
 printf(`1..${checks}\n`);

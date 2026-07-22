@@ -54,7 +54,17 @@ bundled lpac v2.3.0 build disables curl peer and hostname verification. Profile
 download and provider-notification processing therefore require a trusted
 provider source and network. Notification batches run one record at a time and
 stop on the first failure; unknown outcomes are not automatically retried.
-Local Remove never contacts the provider. SM-DS discovery remains unavailable.
+Local Remove, Remove selected, and Remove all never contact a provider. Their
+confirmations warn that deleting unprocessed eUICC records can leave provider
+state out of sync.
+
+SM-DS EventIDs and the optional discovery IMEI are provider credentials. They
+remain in bounded rpcd memory for at most five minutes and are represented to
+the browser only by random opaque capabilities. A successful discovered
+download start consumes its capability. Native AT and PC/SC detection invokes
+only fixed lpac enumeration argv; returned paths, indices, and names are
+allowlisted before reaching the browser, and enumeration does not open an
+eUICC channel.
 
 Changing the default SM-DP+ address writes persistent eUICC state. The UI uses
 a typed fixed-argv RPC, requires an old/new confirmation, and claims success
@@ -64,8 +74,8 @@ only well-formed Base64 advertised as PNG or JPEG, enforces the SGP.22 1024-byte
 decoded limit, checks the matching raster signature, and drops every other icon
 type. The browser repeats the type, size, Base64, and signature checks before
 constructing a fixed `data:image/png` or `data:image/jpeg` URL; decode failures
-fall back to a CSS-only SIM-card shape. Icons in download-preview metadata
-remain discarded.
+fall back safely. The same restrictions apply to icons in download-preview
+metadata before the dialog displays them.
 
 The application does not manage modem, SIM-power, or network-interface
 lifecycle. Profile changes can interrupt mobile connectivity.

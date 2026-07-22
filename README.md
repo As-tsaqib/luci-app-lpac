@@ -26,19 +26,21 @@ architecture, locking model, supported operations, and security boundaries.
 - List, enable, disable, rename, and delete profiles.
 - Display bounded embedded PNG/JPEG profile icons, with a theme-aware SIM-card
   fallback when the profile supplies no usable icon.
-- Download profiles from a complete LPA activation code, a QR image decoded
-  locally in the browser, or manual parameters, with an explicit provider
-  metadata decision before installation.
-- List, process to the provider, and explicitly remove local eUICC
-  notifications, including sequence zero.
-- Configure validated official AT, uqmi, MBIM, and PC/SC settings.
+- Discover pending SM-DS orders and retrieve their profiles directly through
+  the same explicit pre-install metadata decision used by activation codes,
+  local QR decoding, and manual parameters.
+- Display bounded PNG/JPEG icons in installed-profile and download-preview
+  metadata without external icon requests.
+- List and process provider notifications singly, all, or by selection; remove
+  one, selected, or every local eUICC record explicitly, including sequence zero.
+- Configure validated official AT, uqmi, MBIM, and PC/SC settings, with native
+  AT-port and PC/SC-reader detection.
 - Serialize LuCI eUICC operations through a root-owned runtime lock.
 
-SM-DS discovery, direct discovered-order download, download-preview icons,
-modem resets, network-interface control, destructive eUICC purge, and raw
-notification dump/replay remain intentionally out of scope for this staged
-branch. LuCI relies on the matching packaged lpac transport, whose v2.3.0 curl
-backend does not verify provider certificate chains or hostnames.
+Modem resets, network-interface control, destructive eUICC purge, and raw
+notification dump/replay remain intentionally out of scope. LuCI relies on the
+matching packaged lpac transport, whose v2.3.0 curl backend does not verify
+provider certificate chains or hostnames.
 
 ## Compatibility
 
@@ -84,8 +86,9 @@ request 310, the MBIM compatibility changes merged in pull request 438,
 notification sequence handling from pull request 429, provider-status
 hardening from pull request 444, a strict downstream notification-sequence
 parser, and a fail-closed interactive preview gate. The package contains
-exactly nine patches; discovery, TLS verification, and provider-response bounds
-are deferred. See
+exactly eleven patches; two additional discovery fixes preserve the SM-DS
+EventID needed for direct download without changing legacy CLI output. TLS
+verification and provider-response bounds remain deferred. See
 [packages/lpac/README.md](packages/lpac/README.md) for provenance and scope.
 The release-branch LuCI package requires `lpac >=2.3.0.444-r1` so sequence-zero
 notification operations use the matching fixed CLI.

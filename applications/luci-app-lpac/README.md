@@ -14,13 +14,14 @@ wrapper.
 - List, enable, disable, rename, and delete profiles. Embedded profile PNG/JPEG
   icons are displayed when valid; otherwise the list uses a CSS-only SIM-card
   fallback without contacting an external icon service.
-- Download a profile with a complete LPA activation code, a locally decoded QR
-  image, or the non-interactive manual parameters supported by upstream lpac;
-  every path pauses for provider-metadata review before installation.
-- List, process to the provider, and explicitly remove pending eUICC
-  notifications, including sequence zero.
+- Discover pending profile orders through SM-DS and download one directly, or
+  use a complete LPA activation code, locally decoded QR image, or manual lpac
+  parameters; every path pauses for provider-metadata review before installation.
+- Display validated PNG/JPEG icons from installed and pre-install metadata.
+- Process provider notifications singly, all, or by selection, and explicitly
+  remove one, selected, or every local eUICC record, including sequence zero.
 - Configure the official AT, uqmi, MBIM, and PC/SC backends through validated
-  RPC methods.
+  RPC methods, with native detection of AT ports and PC/SC readers.
 
 The Download view mirrors `lpac profile download`: it accepts a complete LPA
 string and the non-interactive upstream SM-DP+, matching-ID, IMEI, and
@@ -63,17 +64,21 @@ inherited rather than introduced by the LuCI page. The merged
 handling of an untrusted server response but does not enable TLS verification.
 
 Process sends one pending notification to its provider and optionally removes
-the eUICC record after successful delivery. Process all snapshots the current
-table and invokes those single operations in sequence, stopping at the first
-failure so partial completion remains explicit. Retrieval failure, unknown
-provider outcome, and successful provider delivery followed by local removal
-failure are reported separately. The standalone Remove action never contacts
-the provider. The bundled notification patches support sequence `0` and reject
-non-canonical or overflowing uint32 arguments.
+the eUICC record after successful delivery. Process all and Process selected
+invoke the chosen single operations in sequence, stopping at the first failure
+so partial completion remains explicit. Retrieval failure, unknown provider
+outcome, and successful provider delivery followed by local removal failure are
+reported separately. Remove, Remove selected, and Remove all never contact a
+provider; their confirmations state that discarding an unprocessed local record
+can leave provider state out of sync. The bundled notification patches support
+sequence `0` and reject non-canonical or overflowing uint32 arguments.
 
-SM-DS discovery, direct discovered-order download, and icons in the
-pre-install download preview are deferred from this staged branch. Installed
-profile icons are read only from the eUICC profile metadata.
+SM-DS discovery uses detailed lpac output carrying each RSP server and EventID.
+The EventID and optional discovery IMEI remain only in rpcd memory behind a
+random five-minute capability. The browser receives only that opaque token and
+the displayable server address. Starting a discovered download consumes the
+capability and passes the hidden EventID into the same owner-only preview
+supervisor; it is restored only if safe process startup fails before lpac runs.
 
 lpac 2.3.0 may report `v0.0.0-unknown` because its generated version header
 collides with an applet header and release tarballs lack Git metadata. This is
@@ -88,7 +93,11 @@ This release branch requires the bundled `lpac >= 2.3.0.444-r1`. OpenWrt
 lpac is too old. The application itself is architecture-independent.
 
 When driver discovery succeeds, Settings offers the reported AT, uqmi, MBIM,
-or PC/SC backends. Safe AT and MBIM device paths below `/dev` are accepted.
+or PC/SC backends. Native `driver apdu list` enumeration detects stable AT
+links below `/dev/serial/by-id`; the backend supplements common OpenWrt
+`ttyUSB`, `ttyACM`, and `wwan…at…` paths through strict patterns. PC/SC reader
+indices come from lpac/pcscd. Enumeration does not open an eUICC channel. Safe
+AT and MBIM device paths below `/dev` and canonical PC/SC indices are accepted.
 The release branch also manages the upstream MBIM slot-mapping bypass. It is
 enabled by default for compatibility and can be disabled for multi-slot
 devices that require normal slot selection.
@@ -108,6 +117,10 @@ The browser calls a small typed `luci.lpac` rpcd/ucode facade. The facade:
 - invokes the packaged `/usr/bin/lpac` entrypoint with positional argv;
 - parses bounded lpac newline-delimited JSON and returns only normalized preview
   metadata to the tab holding the one-shot decision capability;
+- keeps discovered EventIDs behind expiring one-shot capabilities instead of
+  returning matching credentials to the browser;
+- invokes native AT/PCSC device enumerators with a fixed executable,
+  environment assignments, and argv, then allowlists their output;
 - changes the default SM-DP+ address only through a fixed typed RPC and checks
   the result through a fresh normalized `chip info` readback;
 - does not return raw APDU, HTTP, activation-code, or confirmation-code data.
@@ -123,12 +136,12 @@ receives only a fixed system `PATH`. This design does not use `uloop.task()` or
 The output watcher reconstructs fragmented NDJSON, bounds total bytes, line
 length, and line count, and recognizes only the metadata, preview, protected
 post-gate phases, and terminal result needed to verify the session. Preview
-metadata is allowlisted to ICCID, profile/provider name, and profile class;
-download-preview icons and unknown fields are discarded. Malformed, truncated,
-oversized, duplicated, or out-of-order protocol data fails closed. The separate
-installed-profile list accepts only bounded Base64 PNG/JPEG data with a matching
-file signature, and the browser repeats those checks before constructing a
-fixed-type data URL.
+metadata is allowlisted to ICCID, profile/provider name, profile class, and an
+optional bounded PNG/JPEG icon; unknown fields are discarded. Malformed,
+truncated, oversized, duplicated, or out-of-order protocol data fails closed.
+Installed and preview icons accept only bounded Base64 PNG/JPEG data with a
+matching file signature, and the browser repeats those checks before
+constructing a fixed-type data URL.
 
 OpenWrt configures rpcd command execution with a 30-second timeout. The
 one-shot RPC methods retain that limit. Profile download uses a ten-minute
@@ -193,8 +206,8 @@ eUICC to reject deletion of an enabled profile and normalizes the resulting
 lpac error.
 
 Settings writes update only the official options managed by this application,
-including the merged upstream MBIM skip-slot-mapping option on this release
-branch.
+including the selected PC/SC interface and the merged upstream MBIM
+skip-slot-mapping option on this release branch.
 Additional package- or vendor-specific UCI options in the named sections are
 left intact.
 
@@ -228,6 +241,7 @@ explicit owner approval and before/after profile and network-state observations.
 Read and write validation was performed on OpenWrt 25.12.5 with a Fibocom
 L850-GL. A disposable Speedtest profile was decoded and installed through both
 QR controls using an earlier compatible bundle. This validates that combination
-only. The staged notification-processing and persistent default-SM-DP+ paths
-still require separately authorized live checks after a final CI artifact is
-reviewed.
+only. SM-DS provider discovery/download, PC/SC hardware enumeration,
+multi-select notification operations, standalone Remove all, and persistent
+default-SM-DP+ still require separately authorized live checks after a final CI
+artifact is reviewed.

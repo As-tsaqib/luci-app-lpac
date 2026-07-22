@@ -283,6 +283,10 @@ return view.extend({
 	activeSmdp: null,
 	downloadStarting: false,
 	checkingCurrentJob: false,
+	discovering: false,
+	discoveryEntries: [],
+	discoveryGeneration: 0,
+	discoveryButtons: [],
 	previewDecisionSent: false,
 	previewModalJob: null,
 	qrActivationCode: null,
@@ -301,6 +305,9 @@ return view.extend({
 		this.activeSmdp = null;
 		this.downloadStarting = false;
 		this.checkingCurrentJob = false;
+		this.discovering = false;
+		this.discoveryEntries = [];
+		this.discoveryButtons = [];
 		this.previewDecisionSent = false;
 		this.previewModalJob = null;
 		this.pendingStartResult = null;
@@ -310,7 +317,8 @@ return view.extend({
 	},
 
 	isBusy: function() {
-		return !!(this.activeJob || this.downloadStarting || this.checkingCurrentJob);
+		return !!(this.activeJob || this.downloadStarting ||
+			this.checkingCurrentJob || this.discovering);
 	},
 
 	updateControls: function() {
@@ -321,7 +329,7 @@ return view.extend({
 			'lpac-download-mode', 'lpac-activation-code', 'lpac-qr-file',
 			'lpac-qr-camera', 'lpac-qr-file-button', 'lpac-qr-camera-button',
 			'lpac-smdp', 'lpac-matching-id', 'lpac-imei',
-			'lpac-confirmation-code', 'lpac-download-clear'
+			'lpac-smds', 'lpac-confirmation-code', 'lpac-download-clear'
 		].forEach(function(id) {
 			const control = document.getElementById(id);
 
@@ -333,6 +341,10 @@ return view.extend({
 
 		if (download)
 			download.disabled = disabled || this.qrDecoding || this.retryBlocked;
+
+		this.discoveryButtons.forEach(function(button) {
+			button.disabled = disabled;
+		});
 
 		[ 'lpac-qr-file', 'lpac-qr-camera',
 			'lpac-qr-file-button', 'lpac-qr-camera-button' ].forEach(function(id) {
@@ -446,6 +458,29 @@ return view.extend({
 
 		this.previewModalJob = this.activeJob;
 		const content = [];
+		const iconUri = lpac.profileIconUri(preview?.iconType, preview?.icon);
+
+		if (iconUri) {
+			const fallback = E('span', {
+				'aria-hidden': 'true',
+				'style': 'display:none;width:64px;height:64px;border:1px solid currentColor;opacity:.35;border-radius:.4rem'
+			});
+
+			content.push(E('div', { 'class': 'center' }, [
+				E('img', {
+					'src': iconUri,
+					'alt': '',
+					'width': 64,
+					'height': 64,
+					'style': 'width:64px;height:64px;object-fit:contain;border-radius:.4rem',
+					'error': function(event) {
+						event.currentTarget.style.display = 'none';
+						fallback.style.display = 'inline-block';
+					}
+				}),
+				fallback
+			]));
+		}
 
 		if (preview) {
 			content.push(
@@ -457,7 +492,7 @@ return view.extend({
 		}
 		else {
 			content.push(E('div', { 'class': 'alert-message warning', 'role': 'note' }, [
-				_('The provider did not supply profile metadata. The profile identity cannot be verified before installation.')
+				_('The provider did not supply profile metadata. The profile identity and icon cannot be verified before installation.')
 			]));
 		}
 
@@ -553,9 +588,17 @@ return view.extend({
 		const mode = document.getElementById('lpac-download-mode').value;
 		const activation = document.getElementById('lpac-download-activation-fields');
 		const manual = document.getElementById('lpac-download-manual-fields');
+		const discovery = document.getElementById('lpac-download-discovery-fields');
+		const primary = document.getElementById('lpac-download-button');
 
 		activation.style.display = mode === 'activation' ? '' : 'none';
 		manual.style.display = mode === 'manual' ? '' : 'none';
+		discovery.style.display = mode === 'discovery' ? '' : 'none';
+
+		if (primary)
+			primary.textContent = mode === 'discovery'
+				? _('Discover profiles')
+				: _('Retrieve profile preview');
 	},
 
 	handleModeChange: function() {
@@ -563,6 +606,27 @@ return view.extend({
 			this.handleActivationInput();
 
 		this.updateMode();
+	},
+
+	clearDiscoveryResults: function() {
+		this.discoveryGeneration++;
+		this.discoveryEntries = [];
+		this.discoveryButtons = [];
+
+		const results = document.getElementById('lpac-discovery-results');
+
+		if (!results)
+			return;
+
+		if (typeof results.replaceChildren === 'function')
+			results.replaceChildren();
+		else if (Array.isArray(results.children))
+			results.children.length = 0;
+		else
+			while (results.firstChild)
+				results.removeChild(results.firstChild);
+
+		results.style.display = 'none';
 	},
 
 	setQRStatus: function(message, state) {
@@ -672,7 +736,7 @@ return view.extend({
 
 		[
 			'lpac-activation-code', 'lpac-smdp', 'lpac-matching-id',
-			'lpac-imei', 'lpac-confirmation-code', 'lpac-qr-file',
+			'lpac-smds', 'lpac-imei', 'lpac-confirmation-code', 'lpac-qr-file',
 			'lpac-qr-camera'
 		].forEach(function(id) {
 			const input = document.getElementById(id);
@@ -682,6 +746,7 @@ return view.extend({
 		});
 
 		this.clearQRResult();
+		this.clearDiscoveryResults();
 		this.setQRStatus('');
 		this.updateControls();
 	},
@@ -743,6 +808,176 @@ return view.extend({
 			imei,
 			confirmationCode
 		};
+	},
+
+	collectDiscoveryRequest: function() {
+		const smdsInput = document.getElementById('lpac-smds');
+		const imeiInput = document.getElementById('lpac-imei');
+		const smds = smdsInput.value.trim();
+		const imei = imeiInput.value.trim();
+
+		smdsInput.removeAttribute('aria-invalid');
+		imeiInput.removeAttribute('aria-invalid');
+
+		if (smds && !lpac.validSmdpAddress(smds))
+			throw validationError(_('The SM-DS address is invalid.'), 'lpac-smds');
+
+		if (imei && !/^[0-9]{14,16}$/.test(imei))
+			throw validationError(_('IMEI must contain 14 to 16 digits.'), 'lpac-imei');
+
+		return { smds, imei };
+	},
+
+	renderDiscoveryResults: function() {
+		const container = document.getElementById('lpac-discovery-results');
+
+		if (!container)
+			return;
+
+		if (typeof container.replaceChildren === 'function')
+			container.replaceChildren();
+		else if (Array.isArray(container.children))
+			container.children.length = 0;
+		else
+			while (container.firstChild)
+				container.removeChild(container.firstChild);
+
+		this.discoveryButtons = [];
+		const content = [ E('h4', {}, [ _('Discovered download orders') ]) ];
+
+		if (!this.discoveryEntries.length) {
+			content.push(E('p', {}, [
+				_('No pending download orders were returned by the SM-DS.')
+			]));
+		}
+		else {
+			content.push(E('p', { 'class': 'cbi-value-description' }, [
+				_('SM-DS does not reveal profile names here. Retrieve an order to review its provider metadata before installation.')
+			]));
+
+			this.discoveryEntries.forEach(function(entry, index) {
+				const button = E('button', {
+					'class': 'btn cbi-button cbi-button-positive',
+					'disabled': isReadonlyView || this.isBusy(),
+					'click': ui.createHandlerFn(this,
+						'showDiscoveredDownloadModal', entry)
+				}, [ _('Retrieve preview') ]);
+
+				this.discoveryButtons.push(button);
+				content.push(E('div', { 'class': 'cbi-section' }, [
+					E('p', {}, [
+						E('strong', {}, [ _('Order %d').format(index + 1), ': ' ]),
+						entry.smdp
+					]),
+					button
+				]));
+			}, this);
+		}
+
+		content.forEach(function(node) { container.appendChild(node); });
+		container.style.display = '';
+	},
+
+	startDiscovery: function() {
+		if (this.isBusy() || this.retryBlocked)
+			return;
+
+		let request;
+
+		try {
+			request = this.collectDiscoveryRequest();
+		}
+		catch (error) {
+			const input = error.fieldId && document.getElementById(error.fieldId);
+
+			if (input) {
+				input.setAttribute('aria-invalid', 'true');
+				input.focus();
+			}
+
+			ui.addNotification(null, E('p', {}, [ error.message ]), 'error');
+			return;
+		}
+
+		this.clearDiscoveryResults();
+		const generation = this.discoveryGeneration;
+
+		this.discovering = true;
+		this.setDownloadProgress(true,
+			_('Contacting the SM-DS and checking for pending download orders…'));
+		this.updateControls();
+
+		return lpac.discoverProfiles(request.smds, request.imei).then(function(result) {
+			if (generation !== this.discoveryGeneration)
+				return;
+
+			if (!result || !result.success)
+				throw new Error(lpac.errorMessage(result));
+
+			if (!Array.isArray(result.data) || result.data.length > 64 ||
+			    !result.data.every(function(entry) {
+				return entry && typeof entry.entry_id === 'string' &&
+					/^[A-Za-z0-9_-]{32}$/.test(entry.entry_id) &&
+					lpac.validSmdpAddress(entry.smdp);
+			}) || new Set(result.data.map(function(entry) {
+				return entry.entry_id;
+			})).size !== result.data.length)
+				throw new Error(lpac.errorMessage({ error: 'invalid_response' }));
+
+			this.discoveryEntries = result.data.slice();
+			this.renderDiscoveryResults();
+		}.bind(this)).catch(function(error) {
+			if (generation === this.discoveryGeneration)
+				ui.addNotification(null, E('p', {}, [ error.message ]), 'error');
+		}.bind(this)).finally(function() {
+			if (generation === this.discoveryGeneration) {
+				this.discovering = false;
+				this.setDownloadProgress(false);
+				this.updateControls();
+			}
+		}.bind(this));
+	},
+
+	showDiscoveredDownloadModal: function(entry) {
+		if (this.isBusy() || this.retryBlocked || !entry ||
+		    !this.discoveryEntries.some(function(candidate) {
+			return candidate.entry_id === entry.entry_id;
+		}))
+			return;
+
+		const confirmationCode = document.getElementById(
+			'lpac-confirmation-code').value.trim();
+
+		if (confirmationCode.length > 255 ||
+		    /[\u0000-\u001F\u007F]/.test(confirmationCode)) {
+			ui.addNotification(null, E('p', {}, [
+				_('Confirmation code is too long or contains control characters.')
+			]), 'error');
+			return;
+		}
+
+		ui.showModal(_('Review discovered profile'), [
+			E('p', {}, [
+				_('Open the discovered order at %s and retrieve its profile preview? No installation occurs until you approve that preview.').format(entry.smdp)
+			]),
+			E('div', { 'class': 'right' }, [
+				E('button', { 'class': 'btn', 'click': ui.hideModal }, [ _('Cancel') ]),
+				' ',
+				E('button', {
+					'class': 'btn cbi-button-positive important',
+					'click': ui.createHandlerFn(this, 'startDiscoveredDownload',
+						entry, confirmationCode)
+				}, [ _('Retrieve preview') ])
+			])
+		]);
+	},
+
+	handlePrimaryAction: function() {
+		const mode = document.getElementById('lpac-download-mode').value;
+
+		return mode === 'discovery'
+			? this.startDiscovery()
+			: this.showDownloadModal();
 	},
 
 	showDownloadModal: function() {
@@ -813,6 +1048,27 @@ return view.extend({
 	},
 
 	startDownload: function(request) {
+		return this.startDownloadOperation(function() {
+			return lpac.downloadProfile(
+				request.mode,
+				request.activationCode,
+				request.smdp,
+				request.matchingId,
+				request.imei,
+				request.confirmationCode
+			);
+		}, null, request.mode === 'activation'
+			? activationServer(request.activationCode)
+			: request.smdp);
+	},
+
+	startDiscoveredDownload: function(entry, confirmationCode) {
+		return this.startDownloadOperation(function() {
+			return lpac.downloadDiscoveredProfile(entry.entry_id, confirmationCode);
+		}, this.clearDiscoveryResults.bind(this), entry.smdp);
+	},
+
+	startDownloadOperation: function(operation, startedCallback, smdp) {
 		if (this.activeJob || this.downloadStarting || this.checkingCurrentJob ||
 		    this.qrDecoding || this.retryBlocked)
 			return;
@@ -821,25 +1077,19 @@ return view.extend({
 		this.pendingStartResult = null;
 		this.activeDecisionToken = null;
 		this.activePhase = null;
-		this.activeSmdp = request.mode === 'activation'
-			? activationServer(request.activationCode)
-			: request.smdp;
+		this.activeSmdp = smdp || null;
 		this.previewDecisionSent = false;
 		this.previewModalJob = null;
 		ui.hideModal();
 		this.setDownloadProgress(true, _('Starting the protected lpac preview session…'));
 		this.updateControls();
 
-		return lpac.downloadProfile(
-			request.mode,
-			request.activationCode,
-			request.smdp,
-			request.matchingId,
-			request.imei,
-			request.confirmationCode
-		).then(function(result) {
-			if (this.attachRunningJob(result, jobOriginOwned))
+		return operation().then(function(result) {
+			if (this.attachRunningJob(result, jobOriginOwned)) {
+				if (startedCallback)
+					startedCallback();
 				return;
+			}
 
 			if (result?.error === 'busy') {
 				return lpac.getDownloadStatus(0, '').then(function(current) {
@@ -853,8 +1103,12 @@ return view.extend({
 			const recoverable = !result || result.error === 'transport_error' ||
 				result.success === true;
 
-			if (!recoverable)
+			if (!recoverable) {
+				if (result?.error === 'entry_unavailable')
+					this.clearDiscoveryResults();
+
 				throw new Error(lpac.errorMessage(result));
+			}
 
 			this.pendingStartResult = result || {
 				success: false,
@@ -1094,7 +1348,8 @@ return view.extend({
 			E('option', { 'value': 'activation', 'selected': '' }, [
 				_('Activation code or QR')
 			]),
-			E('option', { 'value': 'manual' }, [ _('Manual parameters') ])
+			E('option', { 'value': 'manual' }, [ _('Manual parameters') ]),
+			E('option', { 'value': 'discovery' }, [ _('SM-DS discovery') ])
 		]);
 		const makeQRInput = function(id, capture) {
 			return E('input', {
@@ -1132,12 +1387,13 @@ return view.extend({
 			}, [ label ]);
 		}.bind(this);
 		const hasActiveDownload = !!this.activeJob;
-		const hasProgress = hasActiveDownload || this.checkingCurrentJob;
+		const hasProgress = hasActiveDownload || this.checkingCurrentJob ||
+			this.discovering;
 
 		return E([
 			E('h2', {}, [ _('Download eSIM profile') ]),
 			E('div', { 'class': 'cbi-map-descr' }, [
-				_('Use a complete LPA activation code, a locally decoded QR image, or manual lpac parameters. Every path pauses for provider-metadata review before installation.')
+				_('Find and install profiles through SM-DS discovery, a complete LPA activation code, a locally decoded QR image, or manual lpac parameters. Every download pauses for provider-metadata review before installation.')
 			]),
 			E('div', { 'class': 'alert-message warning', 'role': 'note' }, [
 				_('Security warning: lpac does not currently verify the profile-download server\'s TLS certificate or hostname. Only continue with a trusted activation source and network.')
@@ -1152,7 +1408,9 @@ return view.extend({
 				E('span', { 'class': 'spinning' }),
 				' ',
 				E('span', { 'id': 'lpac-download-progress-text' }, [
-					this.checkingCurrentJob
+					this.discovering
+						? _('Contacting the SM-DS and checking for pending download orders…')
+						: this.checkingCurrentJob
 						? _('Unable to confirm whether a profile download is already running. Retrying automatically…')
 						: (hasActiveDownload
 							? _('Another profile download is running. Monitoring it before this form can be submitted.')
@@ -1215,6 +1473,24 @@ return view.extend({
 						_('Optional activation token passed to lpac with -m.'))
 				])
 			]),
+			E('div', { 'id': 'lpac-download-discovery-fields', 'style': 'display:none' }, [
+				E('div', { 'class': 'cbi-section' }, [
+					E('h3', {}, [ _('SM-DS discovery') ]),
+					formRow(_('SM-DS address'),
+						textInput('lpac-smds', 'text', 'lpa.ds.gsma.com', 255,
+							controlsDisabled, this.clearDiscoveryResults.bind(this)),
+						_('Optional. When empty, lpac uses the GSMA discovery service lpa.ds.gsma.com.')),
+					E('p', { 'class': 'cbi-value-description', 'role': 'note' }, [
+						_('Discovered EventIDs remain only in expiring backend memory. LuCI receives opaque entry identifiers and never stores those matching credentials in the browser.')
+					])
+				]),
+				E('div', {
+					'id': 'lpac-discovery-results',
+					'role': 'region',
+					'aria-live': 'polite',
+					'style': 'display:none'
+				})
+			]),
 			E('div', { 'class': 'cbi-section' }, [
 				E('h3', {}, [ _('Additional parameters') ]),
 				formRow(_('Confirmation code'),
@@ -1223,7 +1499,7 @@ return view.extend({
 					_('Provide this when the activation code or download order requires confirmation.')),
 				formRow(_('IMEI'),
 					textInput('lpac-imei', 'text', _('Optional'), 16,
-						controlsDisabled),
+						controlsDisabled, this.clearDiscoveryResults.bind(this)),
 					_('Optional 14- to 16-digit device identifier passed to lpac with -i.'))
 			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
@@ -1239,7 +1515,7 @@ return view.extend({
 					'class': 'btn cbi-button cbi-button-positive important',
 					'disabled': controlsDisabled || this.qrDecoding ||
 						this.retryBlocked || null,
-					'click': ui.createHandlerFn(this, 'showDownloadModal')
+					'click': ui.createHandlerFn(this, 'handlePrimaryAction')
 				}, [ _('Retrieve profile preview') ])
 			])
 		]);

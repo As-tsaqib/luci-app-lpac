@@ -59,14 +59,20 @@ template is reproducible. The SDK workflow must build only `luci-app-lpac`.
   that boundary accurately in user-facing documentation. Local QR decoding does
   not compensate for lpac v2.3.0 disabling TLS peer and hostname verification.
 - Process provider notifications one canonical uint32 sequence at a time. Stop
-  Process all at the first failure and never automatically retry an unknown
-  provider outcome or a record delivered before local removal failed.
+  Process all or Process selected at the first failure and never automatically
+  retry an unknown provider outcome or a record delivered before local removal
+  failed. Keep every Remove action explicitly local-only and destructive.
 - Treat the default SM-DP+ address as persistent eUICC state: require explicit
   old/new confirmation and fresh exact readback before reporting success.
-- Keep SM-DS discovery, direct discovered-order download, and download-preview
-  icons out of this staged branch until their deferred patches and tests are
-  reintroduced. Installed-profile icons must remain bounded to signature-
-  checked PNG/JPEG data with a local CSS fallback and no external icon lookup.
+- Keep SM-DS EventIDs and discovery IMEI values out of RPC responses. Use only
+  random expiring one-shot capabilities for direct discovered-order downloads,
+  and test expiry, failed-start restoration, and successful consumption.
+- Keep installed and preview icons bounded to signature-checked PNG/JPEG data
+  with no external icon lookup. Browser code must repeat the checks before
+  constructing a fixed image data URL.
+- Enumerate AT and PC/SC devices only through fixed native lpac argv. Never let
+  a browser value choose an executable, environment-variable name, or driver
+  subcommand; allowlist every returned path, index, and label.
 - Preserve the license and source provenance of third-party frontend assets.
 - Preserve granular read/write rpcd ACLs.
 - Add tests for every backend validation or normalization change.

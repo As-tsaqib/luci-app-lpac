@@ -38,6 +38,11 @@ elif [ "$APDU_BACKEND" = "mbim" ]; then
 	export LPAC_APDU_MBIM_DEVICE="$MBIM_DEVICE"
 	export LPAC_APDU_MBIM_USE_PROXY="$MBIM_PROXY"
 	export LPAC_APDU_MBIM_SKIP_SLOT_MAPPING="$MBIM_SKIP_SLOT_MAPPING"
+elif [ "$APDU_BACKEND" = "pcsc" ]; then
+	PCSC_INTERFACE="$(uci_get lpac pcsc interface '')"
+	if [ -n "$PCSC_INTERFACE" ]; then
+		export LPAC_APDU_PCSC_DRV_IFID="$PCSC_INTERFACE"
+	fi
 fi
 
 export LPAC_CUSTOM_ISD_R_AID="$CUSTOM_ISD_R_AID"

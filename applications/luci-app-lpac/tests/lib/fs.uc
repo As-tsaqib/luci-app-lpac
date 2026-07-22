@@ -88,6 +88,12 @@ export function access(path, mode) {
 	return global.TEST_LPAC_ACCESS && global.TEST_ACCESS_FAIL_PATH !== path;
 };
 
+export function glob(pattern) {
+	const result = global.TEST_GLOB_RESULTS?.[pattern];
+
+	return type(result) == 'array' ? result : [];
+};
+
 export function lstat(path) {
 	global.TEST_LSTAT_PATH = path;
 

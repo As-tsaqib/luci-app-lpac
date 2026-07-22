@@ -16,6 +16,13 @@ const callGetDrivers = rpc.declare({
 	expect: {}
 });
 
+const callListApduDevices = rpc.declare({
+	object: 'luci.lpac',
+	method: 'list_apdu_devices',
+	params: [ 'backend' ],
+	expect: {}
+});
+
 const callGetInfo = rpc.declare({
 	object: 'luci.lpac',
 	method: 'get_info',
@@ -41,6 +48,13 @@ const callListNotifications = rpc.declare({
 	expect: {}
 });
 
+const callDiscoverProfiles = rpc.declare({
+	object: 'luci.lpac',
+	method: 'discover_profiles',
+	params: [ 'smds', 'imei' ],
+	expect: {}
+});
+
 const callDownloadProfile = rpc.declare({
 	object: 'luci.lpac',
 	method: 'download_profile',
@@ -48,6 +62,13 @@ const callDownloadProfile = rpc.declare({
 		'mode', 'activation_code', 'smdp', 'matching_id', 'imei',
 		'confirmation_code'
 	],
+	expect: {}
+});
+
+const callDownloadDiscoveredProfile = rpc.declare({
+	object: 'luci.lpac',
+	method: 'download_discovered_profile',
+	params: [ 'entry_id', 'confirmation_code' ],
 	expect: {}
 });
 
@@ -97,6 +118,12 @@ const callRemoveNotification = rpc.declare({
 	object: 'luci.lpac',
 	method: 'remove_notification',
 	params: [ 'seq' ],
+	expect: {}
+});
+
+const callRemoveAllNotifications = rpc.declare({
+	object: 'luci.lpac',
+	method: 'remove_all_notifications',
 	expect: {}
 });
 
@@ -216,14 +243,45 @@ function validSmdpAddress(value) {
 	});
 }
 
+function profileIconUri(iconType, icon) {
+	const type = String(iconType || '').toLowerCase();
+
+	if (![ 'png', 'jpeg' ].includes(type) || typeof icon !== 'string' ||
+	    icon.length < 4 || icon.length > 1368 || icon.length % 4 !== 0 ||
+	    !/^[A-Za-z0-9+/]+={0,2}$/.test(icon))
+		return null;
+
+	try {
+		const decoded = window.atob(icon);
+		const png = decoded.length >= 8 && decoded.charCodeAt(0) === 0x89 &&
+			decoded.slice(1, 4) === 'PNG' && decoded.charCodeAt(4) === 0x0d &&
+			decoded.charCodeAt(5) === 0x0a && decoded.charCodeAt(6) === 0x1a &&
+			decoded.charCodeAt(7) === 0x0a;
+		const jpeg = decoded.length >= 3 && decoded.charCodeAt(0) === 0xff &&
+			decoded.charCodeAt(1) === 0xd8 && decoded.charCodeAt(2) === 0xff;
+
+		if (!decoded.length || decoded.length > 1024 ||
+		    (type === 'png' && !png) || (type === 'jpeg' && !jpeg))
+			return null;
+	}
+	catch (error) {
+		return null;
+	}
+
+	return 'data:image/' + type + ';base64,' + icon;
+}
+
 return baseclass.extend({
 	getVersion: safeCall(callGetVersion),
 	getDrivers: safeCall(callGetDrivers),
+	listApduDevices: safeCall(callListApduDevices),
 	getInfo: safeCall(callGetInfo),
 	setDefaultSmdp: safeCall(callSetDefaultSmdp),
 	listProfiles: safeCall(callListProfiles),
 	listNotifications: safeCall(callListNotifications),
+	discoverProfiles: safeCall(callDiscoverProfiles),
 	downloadProfile: safeCall(callDownloadProfile),
+	downloadDiscoveredProfile: safeCall(callDownloadDiscoveredProfile),
 	getDownloadStatus: safeCall(callGetDownloadStatus),
 	respondDownloadPreview: safeCall(callRespondDownloadPreview),
 	enableProfile: safeCall(callEnableProfile),
@@ -232,9 +290,11 @@ return baseclass.extend({
 	deleteProfile: safeCall(callDeleteProfile),
 	processNotification: safeCall(callProcessNotification),
 	removeNotification: safeCall(callRemoveNotification),
+	removeAllNotifications: safeCall(callRemoveAllNotifications),
 	getConfig: safeCall(callGetConfig),
 	setConfig: safeCall(callSetConfig),
 	validSmdpAddress,
+	profileIconUri,
 
 	errorMessage: function(result) {
 		if (!result)
@@ -258,6 +318,8 @@ return baseclass.extend({
 			return _('The lpac configuration is invalid.');
 		case 'job_not_found':
 			return _('The profile download job is no longer available. Refresh Profiles and Notifications before retrying.');
+		case 'entry_unavailable':
+			return _('The discovered order expired or was already used. Run SM-DS discovery again.');
 		case 'not_authorized':
 			return _('This browser tab is not authorized to approve the profile preview.');
 		case 'not_ready':

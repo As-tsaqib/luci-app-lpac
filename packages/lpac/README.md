@@ -24,17 +24,23 @@ Patch provenance:
 6. Notification sequence-number zero handling from lpac pull request 429.
 7. A downstream decimal-only `uint32_t` parser which rejects signs, suffixes,
    whitespace, and overflow instead of truncating notification sequences.
-8. A fail-closed interactive preview gate. `lpac profile download -p` always
+8. A discovery CLI parser fix so SM-DS and IMEI options are both retained.
+9. Detailed SM-DS discovery output which preserves each bounded EventID with
+   its RSP server while leaving legacy output unchanged.
+10. A fail-closed interactive preview gate. `lpac profile download -p` always
    asks for a decision before PrepareDownload, even if no metadata was supplied.
-9. The provider-status string hardening merged as lpac pull request 444 /
+11. The provider-status string hardening merged as lpac pull request 444 /
    commit `3ff35594ec15062a3ed10c3da1c26eb0a13390b8`.
 
-The patch directory intentionally contains exactly these nine patches.
-Detailed SM-DS discovery, TLS verification, and provider-response memory bounds
-are deferred to later work.
+The patch directory intentionally contains exactly these eleven patches.
+TLS verification and provider-response memory bounds are deferred to later
+work.
 
 The compatibility bundle enables the MBIM slot-mapping bypass by default.
 It also selects the MBIM APDU backend by default for new installations.
+When PC/SC is selected, the wrapper exports the optional reader interface
+stored in `lpac.pcsc.interface`; an empty value keeps lpac's first-reader
+behavior.
 LuCI exposes the bypass at
 `Modem → eSIM Manager → Settings → MBIM backend`.
 Set `lpac.mbim.skip_slot_mapping=0` on devices that require lpac to query and

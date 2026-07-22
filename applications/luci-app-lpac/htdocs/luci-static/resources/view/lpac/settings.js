@@ -65,6 +65,11 @@ function validDevicePath(value) {
 	});
 }
 
+function validPcscInterface(value) {
+	return value === '' || (/^(0|[1-9][0-9]{0,3})$/.test(value) &&
+		Number(value) <= 1024);
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -73,8 +78,104 @@ return view.extend({
 		]);
 	},
 
+	renderDetectedDevices: function(backend, devices) {
+		const container = document.getElementById('lpac-' + backend + '-devices');
+
+		if (!container)
+			return;
+
+		if (typeof container.replaceChildren === 'function')
+			container.replaceChildren();
+		else if (Array.isArray(container.children))
+			container.children.length = 0;
+		else
+			while (container.firstChild)
+				container.removeChild(container.firstChild);
+
+		if (!devices.length) {
+			container.appendChild(E('p', { 'class': 'cbi-value-description' }, [
+				backend === 'at'
+					? _('No AT serial ports were reported by lpac or found at supported OpenWrt device paths.')
+					: _('No PC/SC readers were reported by pcscd.')
+			]));
+			return;
+		}
+
+		const select = E('select', {
+			'class': 'cbi-input-select',
+			'disabled': isReadonlyView
+		}, devices.map(function(device, index) {
+			return E('option', {
+				'value': device.value,
+				'selected': index === 0 ? '' : null
+			}, [
+				device.name + ' (' + device.value + ')'
+			]);
+		}));
+		const target = backend === 'at'
+			? 'lpac-at-device'
+			: 'lpac-pcsc-interface';
+
+		container.appendChild(E('div', {}, [
+			select,
+			' ',
+			E('button', {
+				'class': 'btn cbi-button cbi-button-action',
+				'type': 'button',
+				'disabled': isReadonlyView,
+				'click': function(event) {
+					if (event)
+						event.preventDefault();
+
+					document.getElementById(target).value = select.value;
+				}
+			}, [ _('Use selected') ])
+		]));
+	},
+
+	detectApduDevices: function(backend) {
+		const button = document.getElementById('lpac-detect-' + backend);
+		const container = document.getElementById('lpac-' + backend + '-devices');
+
+		if (!button || !container || isReadonlyView)
+			return;
+
+		button.disabled = true;
+		container.textContent = '';
+		container.appendChild(E('p', { 'class': 'spinning' }, [
+			backend === 'at'
+				? _('Detecting AT serial ports…')
+				: _('Detecting PC/SC readers…')
+		]));
+
+		return lpac.listApduDevices(backend).then(function(result) {
+			if (!result || !result.success || result.data?.backend !== backend ||
+			    !Array.isArray(result.data.devices) ||
+			    !result.data.devices.every(function(device) {
+				return device && typeof device.name === 'string' &&
+					typeof device.value === 'string' &&
+					(backend === 'at'
+						? validDevicePath(device.value)
+						: validPcscInterface(device.value));
+			}))
+				throw new Error(lpac.errorMessage(result?.success
+					? { error: 'invalid_response' }
+					: result));
+
+			this.renderDetectedDevices(backend, result.data.devices);
+		}.bind(this)).catch(function(error) {
+			container.textContent = '';
+			container.appendChild(E('p', { 'class': 'alert-message warning' }, [
+				error.message
+			]));
+		}).finally(function() {
+			button.disabled = !!isReadonlyView;
+		});
+	},
+
 	handleSaveConfig: function() {
 		const atDevice = document.getElementById('lpac-at-device').value.trim();
+		const pcscInterface = document.getElementById('lpac-pcsc-interface').value.trim();
 		const uqmiDevice = document.getElementById('lpac-uqmi-device').value.trim();
 		const mbimDevice = document.getElementById('lpac-mbim-device').value.trim();
 		const aid = document.getElementById('lpac-custom-aid').value.trim();
@@ -83,6 +184,11 @@ return view.extend({
 		if (!validDevicePath(atDevice) || !validDevicePath(uqmiDevice) ||
 		    !validDevicePath(mbimDevice)) {
 			ui.addNotification(null, E('p', {}, [ _('Device paths must be safe absolute paths below /dev without empty, . or .. components.') ]), 'error');
+			return;
+		}
+
+		if (!validPcscInterface(pcscInterface)) {
+			ui.addNotification(null, E('p', {}, [ _('The PC/SC reader interface must be empty or a canonical index from 0 to 1024.') ]), 'error');
 			return;
 		}
 
@@ -107,6 +213,9 @@ return view.extend({
 			at: {
 				device: atDevice,
 				debug: document.getElementById('lpac-at-debug').checked ? '1' : '0'
+			},
+			pcsc: {
+				interface: pcscInterface
 			},
 			uqmi: {
 				device: uqmiDevice,
@@ -151,6 +260,7 @@ return view.extend({
 		const config = configResult.data || {};
 		const global = config.global || {};
 		const at = config.at || {};
+		const pcsc = config.pcsc || {};
 		const uqmi = config.uqmi || {};
 		const mbim = config.mbim || {};
 		const drivers = lpac.dataOr(driversResult, {});
@@ -217,7 +327,33 @@ return view.extend({
 				formRow(_('Serial device'),
 					textInput('lpac-at-device', at.device || '/dev/ttyUSB2', '/dev/ttyUSB2'),
 					_('The AT backend is timing-sensitive and may not support every profile operation on all modems.')),
+				formRow(_('Device detection'), E('div', {}, [
+					E('button', {
+						'id': 'lpac-detect-at',
+						'class': 'btn cbi-button cbi-button-action',
+						'type': 'button',
+						'disabled': isReadonlyView,
+						'click': ui.createHandlerFn(this, 'detectApduDevices', 'at')
+					}, [ _('Detect AT ports') ]),
+					E('div', { 'id': 'lpac-at-devices' })
+				]), _('Detection combines stable links reported by lpac with strict ttyUSB, ttyACM, and wwan AT device patterns. It does not send AT commands.')),
 				formRow(_('AT debug'), checkbox('lpac-at-debug', at.debug === '1'))
+			]),
+			E('div', { 'class': 'cbi-section' }, [
+				E('h3', {}, [ _('PC/SC backend') ]),
+				formRow(_('Reader interface'),
+					textInput('lpac-pcsc-interface', pcsc.interface || '', _('First available reader'), 4),
+					_('Leave empty to let lpac use the first available reader, or select a detected numeric interface.')),
+				formRow(_('Reader detection'), E('div', {}, [
+					E('button', {
+						'id': 'lpac-detect-pcsc',
+						'class': 'btn cbi-button cbi-button-action',
+						'type': 'button',
+						'disabled': isReadonlyView,
+						'click': ui.createHandlerFn(this, 'detectApduDevices', 'pcsc')
+					}, [ _('Detect PC/SC readers') ]),
+					E('div', { 'id': 'lpac-pcsc-devices' })
+				]), _('Detection asks the native lpac PC/SC driver to enumerate pcscd readers without opening an eUICC channel.'))
 			]),
 			E('div', { 'class': 'cbi-page-actions' }, [
 				E('button', {

@@ -30,15 +30,17 @@ The binary is built from the official lpac v2.3.0 archive with:
 6. Notification sequence zero handling from upstream pull request 429.
 7. A strict decimal `uint32_t` notification-sequence parser that rejects
    signs, truncation, overflow, whitespace, and trailing data.
-8. A fail-closed interactive preview gate. `lpac profile download -p` always
+8. A command-line discovery parser fix so SM-DS and IMEI options are both used.
+9. Detailed SM-DS discovery output which preserves each EventID with its RSP
+   server for direct discovered-order download while keeping legacy output.
+10. A fail-closed interactive preview gate. `lpac profile download -p` always
    pauses for a decision before PrepareDownload, including when provider
    metadata is absent.
-9. Provider-status string hardening from upstream pull request 444 / commit
+11. Provider-status string hardening from upstream pull request 444 / commit
    `3ff35594ec15062a3ed10c3da1c26eb0a13390b8`.
 
-SM-DS discovery, direct discovered-order download, curl TLS verification, and
-provider-response memory bounds are intentionally deferred from this staged
-nine-patch set.
+Curl TLS verification and provider-response memory bounds remain intentionally
+deferred from this eleven-patch set.
 
 The downstream package version is `2.3.0.444-r1`; `lpac version` reports the
 upstream source version `2.3.0`. These upstream fixes were merged after the
@@ -62,7 +64,8 @@ uci commit lpac
 While the bypass is enabled, the configured MBIM UIM slot is ignored and a
 multi-slot modem may expose a different eUICC than expected.
 The default APDU backend for a new installation is `mbim`; it can be changed
-from LuCI Settings or `/etc/config/lpac`.
+from LuCI Settings or `/etc/config/lpac`. The bundle also persists the optional
+PC/SC reader index selected from native device detection.
 The slot-mapping bypass can be changed at
 `Modem → eSIM Manager → Settings → MBIM backend` or through UCI.
 

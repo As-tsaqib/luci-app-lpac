@@ -47,34 +47,14 @@ function profileIconFallback() {
 }
 
 function profileIcon(profile) {
-	const type = String(profile.iconType || '').toLowerCase();
-	const icon = profile.icon;
+	const uri = lpac.profileIconUri(profile.iconType, profile.icon);
 
-	if ((type !== 'png' && type !== 'jpeg') || typeof icon !== 'string' ||
-	    icon.length < 4 || icon.length > 1368 || icon.length % 4 !== 0 ||
-	    !/^[A-Za-z0-9+/]+={0,2}$/.test(icon))
+	if (!uri)
 		return profileIconFallback();
-
-	try {
-		const decoded = window.atob(icon);
-		const png = decoded.length >= 8 &&
-			decoded.charCodeAt(0) === 0x89 && decoded.slice(1, 4) === 'PNG' &&
-			decoded.charCodeAt(4) === 0x0d && decoded.charCodeAt(5) === 0x0a &&
-			decoded.charCodeAt(6) === 0x1a && decoded.charCodeAt(7) === 0x0a;
-		const jpeg = decoded.length >= 3 && decoded.charCodeAt(0) === 0xff &&
-			decoded.charCodeAt(1) === 0xd8 && decoded.charCodeAt(2) === 0xff;
-
-		if (!decoded.length || decoded.length > 1024 ||
-		    (type === 'png' && !png) || (type === 'jpeg' && !jpeg))
-			return profileIconFallback();
-	}
-	catch (error) {
-		return profileIconFallback();
-	}
 
 	return E('img', {
 		'class': 'lpac-profile-icon',
-		'src': 'data:image/' + type + ';base64,' + icon,
+		'src': uri,
 		'alt': '',
 		'aria-hidden': 'true',
 		'error': function() {

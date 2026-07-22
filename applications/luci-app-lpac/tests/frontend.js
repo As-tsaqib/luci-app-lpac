@@ -303,6 +303,7 @@ function qrPixels(rows, scale) {
 
 const actualLpacClient = loadLpacClient();
 lpac.validSmdpAddress = actualLpacClient.validSmdpAddress;
+lpac.profileIconUri = actualLpacClient.profileIconUri;
 const lpacClientSource = fs.readFileSync(path.join(appRoot,
 	'htdocs/luci-static/resources/lpac.js'), 'utf8');
 assert.match(lpacClientSource,
@@ -311,6 +312,17 @@ assert.match(lpacClientSource,
 assert.match(lpacClientSource,
 	/method: 'respond_download_preview',[\s\S]*?params: \[ 'job_id', 'decision_token', 'accept' \]/,
 	'preview approval must identify the exact owned job and one-time decision token');
+assert.match(lpacClientSource,
+	/method: 'discover_profiles',[\s\S]*?params: \[ 'smds', 'imei' \]/,
+	'SM-DS discovery should expose only typed address and IMEI parameters');
+assert.match(lpacClientSource,
+	/method: 'download_discovered_profile',[\s\S]*?params: \[ 'entry_id', 'confirmation_code' \]/,
+	'discovered download should accept only an opaque entry token and confirmation code');
+assert.match(lpacClientSource,
+	/method: 'list_apdu_devices',[\s\S]*?params: \[ 'backend' \]/,
+	'APDU device enumeration should accept one allowlisted backend name');
+assert.match(lpacClientSource, /method: 'remove_all_notifications'/,
+	'standalone Remove all should use its own typed RPC');
 
 [ 'smdp.example.com', 'smdp.example.com:443', '192.0.2.1',
 	'[2001:db8::1]:8443' ].forEach(function(address) {
@@ -546,6 +558,35 @@ assert.strictEqual(byText(notificationsPage, 'button', 'Process all').length, 1,
 assert.ok(byText(notificationsPage, 'button', 'Process')[0].attrs.disabled == null &&
 	byText(notificationsPage, 'button', 'Process all')[0].attrs.disabled == null,
 	'provider processing controls should remain writable for sequence zero');
+assert.strictEqual(byText(notificationsPage, 'button', 'Process selected').length, 1);
+assert.strictEqual(byText(notificationsPage, 'button', 'Remove selected').length, 1);
+assert.strictEqual(byText(notificationsPage, 'button', 'Remove all').length, 1,
+	'the page should expose an explicit standalone Remove all action');
+const sequenceSelection = findAll(notificationsPage, function(node) {
+	return node.tag === 'input' && node.attrs?.['aria-label'] ===
+		'Select notification 0';
+})[0];
+assert.ok(sequenceSelection, 'each canonical sequence should have a selection checkbox');
+sequenceSelection.checked = true;
+sequenceSelection.attrs.change({ currentTarget: sequenceSelection });
+assert.strictEqual(byText(notificationsPage, 'button', 'Process selected')[0].disabled,
+	false, 'selecting a sequence should enable Process selected');
+assert.strictEqual(byText(notificationsPage, 'button', 'Remove selected')[0].disabled,
+	false, 'selecting a sequence should enable Remove selected');
+byText(notificationsPage, 'button', 'Process selected')[0].attrs.click();
+assert.strictEqual(modal.title, 'Process notification',
+	'Process selected should reuse the ordered provider-processing confirmation');
+ui.hideModal();
+byText(notificationsPage, 'button', 'Remove selected')[0].attrs.click();
+assert.strictEqual(modal.title, 'Remove notification',
+	'Remove selected should retain the destructive local-only warning');
+ui.hideModal();
+byText(notificationsPage, 'button', 'Remove all')[0].attrs.click();
+assert.strictEqual(modal.title, 'Remove all notifications',
+	'Remove all should require a dedicated destructive confirmation');
+assert.ok(modal.content.map(textContent).join('').includes('does not contact any provider'),
+	'Remove all should state clearly that no provider processing occurs');
+ui.hideModal();
 byText(notificationsPage, 'button', 'Process')[0].attrs.click();
 assert.strictEqual(modal.title, 'Process notification',
 	'sequence zero should open the normal provider-processing confirmation');
@@ -598,12 +639,14 @@ const settingsPage = settingsView.render([
 				custom_isd_r_aid: 'A0000005591010FFFFFFFF8900000100'
 			},
 			at: { device: '/dev/ttyUSB2', debug: '0' },
+			pcsc: { interface: '' },
 			uqmi: { device: '/dev/cdc-wdm0', debug: '0' },
 			mbim: { device: '/dev/cdc-wdm0', proxy: '0', skip_slot_mapping: '1' }
 		}
 	},
-	{ success: true, data: { apdu: [ 'mbim', 'at' ], http: [ 'curl' ] } }
+	{ success: true, data: { apdu: [ 'mbim', 'at', 'pcsc' ], http: [ 'curl' ] } }
 ]);
+documentRoot = settingsPage;
 
 function findById(id) {
 	return findAll(settingsPage, function(node) { return node.attrs?.id === id; })[0];
@@ -617,6 +660,10 @@ assert.ok(findById('lpac-mbim-proxy').attrs.checked == null,
 	'false MBIM proxy must render unchecked');
 assert.ok(findById('lpac-mbim-skip-slot-mapping').attrs.checked != null,
 	'true MBIM slot-mapping bypass must render checked');
+assert.strictEqual(findById('lpac-pcsc-interface').value, '',
+	'an empty PC/SC interface should preserve native first-reader selection');
+assert.ok(findById('lpac-detect-at') && findById('lpac-detect-pcsc'),
+	'Settings should provide explicit AT and PC/SC detection actions');
 
 const backend = findById('lpac-apdu-backend');
 const backendOptions = findAll(backend, function(node) { return node.tag === 'option'; });
@@ -649,15 +696,65 @@ assert.ok(!settingsSource.includes('setDefaultSmdp') &&
 	!settingsSource.includes('lpac-default-smdp'),
 	'the persistent eUICC default editor must not be mixed into UCI Settings');
 
+async function testApduDetection() {
+	const detectionCalls = [];
+
+	lpac.listApduDevices = function(backendName) {
+		detectionCalls.push(backendName);
+
+		return Promise.resolve({
+			success: true,
+			data: {
+				backend: backendName,
+				devices: backendName === 'at'
+					? [ {
+						value: '/dev/serial/by-id/usb-Test_Modem-if00',
+						name: 'Test modem'
+					} ]
+					: [ { value: '3', name: 'Test smart-card reader' } ]
+			}
+		});
+	};
+
+	await findById('lpac-detect-at').attrs.click();
+	const atUse = byText(findById('lpac-at-devices'), 'button', 'Use selected')[0];
+	assert.ok(atUse, 'AT detection should render a selectable native result');
+	atUse.attrs.click();
+	assert.strictEqual(findById('lpac-at-device').value,
+		'/dev/serial/by-id/usb-Test_Modem-if00',
+		'using a detected AT port should fill the validated device field');
+
+	await findById('lpac-detect-pcsc').attrs.click();
+	const pcscUse = byText(findById('lpac-pcsc-devices'), 'button', 'Use selected')[0];
+	assert.ok(pcscUse, 'PC/SC detection should render a selectable reader result');
+	pcscUse.attrs.click();
+	assert.strictEqual(findById('lpac-pcsc-interface').value, '3',
+		'using a detected PC/SC reader should fill its canonical interface index');
+	assert.deepStrictEqual(detectionCalls, [ 'at', 'pcsc' ],
+		'each detection action should invoke only its allowlisted backend');
+}
+
 const menu = JSON.parse(fs.readFileSync(path.join(appRoot,
 	'root/usr/share/luci/menu.d/luci-app-lpac.json'), 'utf8'));
 const acl = JSON.parse(fs.readFileSync(path.join(appRoot,
 	'root/usr/share/rpcd/acl.d/luci-app-lpac.json'), 'utf8'))['luci-app-lpac'];
+const backendSource = fs.readFileSync(path.join(appRoot,
+	'root/usr/share/rpcd/ucode/luci.lpac'), 'utf8');
+const backendMethods = Array.from(backendSource.matchAll(/^\t([a-z_]+): \{$/gm),
+	function(match) { return match[1]; }).sort();
+const aclMethods = acl.read.ubus['luci.lpac']
+	.concat(acl.write.ubus['luci.lpac']).sort();
+assert.deepStrictEqual(aclMethods, backendMethods,
+	'every typed backend method should appear exactly once in the read/write ACL');
 assert.ok(acl.write.ubus['luci.lpac'].includes('respond_download_preview'),
-	'the write ACL should allow only the typed preview-decision RPC');
-assert.ok(!JSON.stringify(acl).includes('discover_profiles') &&
-	!JSON.stringify(acl).includes('download_discovered_profile'),
-	'the staged ACL must not reintroduce profile discovery RPCs');
+	'the write ACL should allow the typed preview-decision RPC');
+assert.ok(acl.write.ubus['luci.lpac'].includes('discover_profiles') &&
+	acl.write.ubus['luci.lpac'].includes('download_discovered_profile'),
+	'the write ACL should expose both typed SM-DS discovery operations');
+assert.ok(acl.read.ubus['luci.lpac'].includes('list_apdu_devices'),
+	'the read ACL should permit non-mutating APDU device enumeration');
+assert.ok(acl.write.ubus['luci.lpac'].includes('remove_all_notifications'),
+	'the write ACL should permit explicit standalone Remove all');
 assert.strictEqual(menu['admin/modem'].title, 'Modem',
 	'the application should provide the shared Modem menu root');
 assert.deepStrictEqual(menu['admin/modem'].depends, {},
@@ -801,6 +898,7 @@ async function testDownloadView() {
 		'lpac-download-mode', 'lpac-activation-code', 'lpac-qr-file',
 		'lpac-qr-camera', 'lpac-qr-file-button', 'lpac-qr-camera-button',
 		'lpac-smdp', 'lpac-matching-id', 'lpac-confirmation-code',
+		'lpac-smds', 'lpac-download-discovery-fields', 'lpac-discovery-results',
 		'lpac-imei', 'lpac-download-clear', 'lpac-download-button',
 		'lpac-download-progress', 'lpac-download-progress-text',
 		'lpac-download-verification'
@@ -844,12 +942,15 @@ async function testDownloadView() {
 	const mode = downloadById('lpac-download-mode');
 	const activationFields = downloadById('lpac-download-activation-fields');
 	const manualFields = downloadById('lpac-download-manual-fields');
+	const discoveryFields = downloadById('lpac-download-discovery-fields');
 	mode.value = 'manual';
 	downloadView.updateMode();
 	assert.strictEqual(activationFields.style.display, 'none',
 		'manual mode should hide activation-code controls');
 	assert.strictEqual(manualFields.style.display, '',
 		'manual mode should reveal non-interactive lpac parameters');
+	assert.strictEqual(discoveryFields.style.display, 'none',
+		'manual mode should keep SM-DS controls hidden');
 
 	const smdpInput = downloadById('lpac-smdp');
 	const matchingInput = downloadById('lpac-matching-id');
@@ -882,6 +983,55 @@ async function testDownloadView() {
 			`${value} should be rejected before invoking the RPC`);
 	});
 	smdpInput.value = 'smdp.example.com:443';
+
+	mode.value = 'discovery';
+	downloadView.updateMode();
+	assert.strictEqual(activationFields.style.display, 'none');
+	assert.strictEqual(manualFields.style.display, 'none');
+	assert.strictEqual(discoveryFields.style.display, '',
+		'SM-DS mode should reveal only discovery controls');
+	assert.strictEqual(textContent(downloadById('lpac-download-button')),
+		'Discover profiles',
+		'the primary action should clearly switch to discovery');
+	const discoveryCalls = [];
+	lpac.discoverProfiles = function(smds, imei) {
+		discoveryCalls.push([ smds, imei ]);
+		return Promise.resolve({
+			success: true,
+			data: [ {
+				entry_id: 'D'.repeat(32),
+				smdp: 'pending.example.com'
+			} ]
+		});
+	};
+	downloadById('lpac-smds').value = '';
+	downloadById('lpac-imei').value = '490154203237518';
+	await downloadView.handlePrimaryAction();
+	assert.deepStrictEqual(discoveryCalls, [ [ '', '490154203237518' ] ],
+		'discovery should pass only the optional SM-DS and validated IMEI');
+	assert.ok(textContent(downloadById('lpac-discovery-results'))
+		.includes('pending.example.com'),
+		'discovery should render the safe server address returned for an opaque order');
+	assert.ok(!textContent(downloadById('lpac-discovery-results')).includes('EventID'),
+		'discovery results should never expose a matching EventID');
+	const discoveredReviewButton = byText(downloadById('lpac-discovery-results'),
+		'button', 'Retrieve preview')[0];
+	assert.ok(discoveredReviewButton && !discoveredReviewButton.disabled,
+		'a discovered order should offer direct preview retrieval');
+	discoveredReviewButton.attrs.click();
+	assert.strictEqual(modal.title, 'Review discovered profile');
+	const discoveredDownloadCalls = [];
+	lpac.downloadDiscoveredProfile = function(entryId, confirmationCode) {
+		discoveredDownloadCalls.push([ entryId, confirmationCode ]);
+		return Promise.resolve({ success: false, error: 'entry_unavailable' });
+	};
+	const discoveredConfirm = byText(modal.content, 'button', 'Retrieve preview')[0];
+	await discoveredConfirm.attrs.click();
+	assert.deepStrictEqual(discoveredDownloadCalls, [ [ 'D'.repeat(32), '' ] ],
+		'direct discovered download should submit only the opaque entry token and confirmation code');
+	assert.strictEqual(downloadView.discoveryEntries.length, 0,
+		'an expired discovered capability should clear stale browser results');
+	downloadById('lpac-imei').value = '';
 
 	mode.value = 'activation';
 	downloadView.updateMode();
@@ -1176,7 +1326,9 @@ async function testDownloadView() {
 					profileName: 'Preview plan',
 					serviceProviderName: 'Preview carrier',
 					iccid: '8912345678901234567',
-					profileClass: 'operational'
+					profileClass: 'operational',
+					iconType: 'png',
+					icon: profilePng
 				}
 			}
 		},
@@ -1231,9 +1383,14 @@ async function testDownloadView() {
 			assert.ok(modal.content.map(textContent).join('').includes(value),
 				`the profile preview should display ${value}`);
 		});
-	assert.strictEqual(findAll(modal.content, function(node) {
+	const previewImages = findAll(modal.content, function(node) {
 		return node.tag === 'img';
-	}).length, 0, 'the bounded profile-download preview should remain icon-free');
+	});
+	assert.strictEqual(previewImages.length, 1,
+		'a bounded provider icon should render in the download preview');
+	assert.strictEqual(previewImages[0].attrs.src,
+		`data:image/png;base64,${profilePng}`,
+		'the preview icon should use a browser-revalidated fixed PNG data URL');
 	const installButton = byText(modal.content, 'button', 'Install profile')[0];
 	assert.ok(installButton, 'metadata review should require an explicit Install profile action');
 	await installButton.attrs.click();
@@ -1636,7 +1793,7 @@ async function testDownloadView() {
 	L.hasViewPermission = function() { return true; };
 }
 
-testDownloadView().then(function() {
+testApduDetection().then(testDownloadView).then(function() {
 	console.log('ok - frontend controls, download recovery, real QR decoding, menu, and safety states');
 }).catch(function(error) {
 	console.error(error);

@@ -111,11 +111,15 @@ jobs:
           mapfile -t patch_files < <(
             find packages/lpac/patches -maxdepth 1 -type f -name '*.patch' | sort
           )
-          [ "${#patch_files[@]}" -eq 9 ]
+          [ "${#patch_files[@]}" -eq 11 ]
           printf '%s\n' "${patch_files[@]}" | grep -Fx \
             'packages/lpac/patches/0030-fix-notification-sequence-zero.patch'
           printf '%s\n' "${patch_files[@]}" | grep -Fx \
             'packages/lpac/patches/0031-notification-parse-strict-uint32-sequences.patch'
+          printf '%s\n' "${patch_files[@]}" | grep -Fx \
+            'packages/lpac/patches/0040-profile-discovery-parse-every-option.patch'
+          printf '%s\n' "${patch_files[@]}" | grep -Fx \
+            'packages/lpac/patches/0041-profile-discovery-preserve-event-identifiers.patch'
           printf '%s\n' "${patch_files[@]}" | grep -Fx \
             'packages/lpac/patches/0050-profile-download-always-gate-preview.patch'
           printf '%s\n' "${patch_files[@]}" | grep -Fx \
@@ -139,6 +143,15 @@ jobs:
             build/lpac-source/src/applet/notification/notification_sequence.c \
             -o build/lpac-sequence-number-test
           build/lpac-sequence-number-test
+
+          cc -std=gnu11 -Wall -Wextra -Werror \
+            -I build/lpac-source \
+            packages/lpac/test-es11-events.c \
+            build/lpac-source/euicc/es11_event.c \
+            build/lpac-source/cjson/cJSON.c \
+            -lm \
+            -o build/lpac-es11-events-test
+          build/lpac-es11-events-test
 
           packages/lpac/test-patch-contracts.sh \
             build/lpac-source packages/lpac/Makefile

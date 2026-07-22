@@ -2,15 +2,17 @@
 
 ## Goal
 
-Prepare a deliberately staged native LuCI application based on
-`fix/profile-download-hardening-extra`. Downloads support pasted activation
-codes, manual parameters, and separate camera/file QR inputs. Pending provider
-notifications remain processable with explicit partial/unknown outcome
-handling. Every download pauses in the same live lpac session for an explicit
-provider-metadata decision before PrepareDownload. SM-DS profile discovery,
-direct discovered-order download, and profile icons are intentionally deferred.
-The bundled lpac package carries exactly nine patches: the original five plus
-`0030`, `0031`, `0050`, and `0060`.
+Extend the stable native LuCI application on
+`feature/smds-discovery-advanced`. Downloads support pasted activation codes,
+manual parameters, camera/file QR inputs, and expiring SM-DS discovery results.
+Every download, including a discovered order, pauses in the same live lpac
+session for an explicit provider-metadata decision before PrepareDownload.
+Installed and preview metadata may render strictly bounded PNG/JPEG icons.
+Settings enumerate native AT ports and PC/SC readers. Notifications support
+single, all, and selected processing/removal while preserving explicit
+partial/unknown outcome handling. The bundled lpac series contains the prior
+nine patches plus discovery patches `0040` and `0041`; TLS verification and
+provider-response bounds remain deferred.
 
 ## Sources of truth
 
@@ -44,8 +46,13 @@ The bundled lpac package carries exactly nine patches: the original five plus
   form and require Profiles/Notifications verification before any retry.
 - Bound raw input before normalization and test real supervisor, process-group,
   signal, and inherited-lock behavior in CI without contacting an eSIM provider.
-- Keep SM-DS discovery, direct discovered-order download, and profile icons
-  absent from the staged frontend, backend, ACLs, and package claims.
+- Keep SM-DS EventIDs and discovery IMEI values only in bounded, expiring
+  backend memory. Return opaque capabilities and consume them exactly once when
+  starting a discovered profile's protected preview session.
+- Accept only signature-matched PNG/JPEG profile icons up to 1024 decoded bytes
+  and revalidate them in the browser before constructing fixed image data URLs.
+- Enumerate AT ports and PC/SC readers through fixed native lpac argv without
+  opening an eUICC channel; validate every returned path, index, and label.
 - Require every download path to enter one live lpac preview session and receive
   an explicit one-shot decision before PrepareDownload. Missing metadata must
   still stop for confirmation; a lost owner response must never authorize
@@ -53,6 +60,9 @@ The bundled lpac package carries exactly nine patches: the original five plus
 - Process provider notifications one sequence at a time, including sequence zero.
   Stop a batch on the first failure and distinguish retrieval failure, unknown
   provider outcome, and successful delivery followed by local removal failure.
+- Support explicit multi-selection for Process selected and Remove selected.
+  Keep standalone Remove all visually destructive and state clearly that it
+  removes local eUICC records without contacting providers.
 - Clearly disclose that bundled lpac v2.3.0 inherits disabled curl peer and
   hostname verification. Do not claim that this staged branch fixes TLS or
   provider-response allocation bounds.
@@ -62,9 +72,9 @@ The bundled lpac package carries exactly nine patches: the original five plus
 - Inventory lpac applets explicitly. Destructive chip purge and raw notification
   dump/replay are intentionally out of scope for a general LuCI management UI;
   do not expose them merely to claim every diagnostic applet is present.
-- Keep only patches `0001`, `0002`, `0010`, `0015`, `0020`, `0030`, `0031`,
-  `0050`, and `0060`; defer `0040`, `0041`, `0070`, and `0071` and all tests
-  that depend solely on them.
+- Keep patches `0001`, `0002`, `0010`, `0015`, `0020`, `0030`, `0031`,
+  `0040`, `0041`, `0050`, and `0060`; defer `0070` and `0071` and every claim
+  that depends on TLS verification or provider-response allocation bounds.
 - Add regression coverage for every retained behavior and run LuCI lint, ucode
   tests, host patch-contract tests, package builds, and proportionate router
   validation.

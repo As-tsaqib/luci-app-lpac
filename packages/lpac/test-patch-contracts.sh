@@ -16,7 +16,9 @@ import sys
 source = pathlib.Path(sys.argv[1])
 makefile = pathlib.Path(sys.argv[2]).read_text()
 
+discovery = (source / "src/applet/profile/discovery.c").read_text()
 es9p = (source / "euicc/es9p.c").read_text()
+events = (source / "euicc/es11_event.c").read_text()
 driver_cmake = (source / "driver/CMakeLists.txt").read_text()
 download = (source / "src/applet/profile/download.c").read_text()
 
@@ -28,6 +30,12 @@ assert re.search(
     r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/apdu/uqmi\.c\)\s+endif\(\)",
     driver_cmake,
 )
+
+assert discovery.count("getopt(argc, argv, opt_string)") == 1
+assert 'static const char *opt_string = "s:i:jh?";' in discovery
+assert 'cJSON_AddStringToObject(jevent, "eventId"' in discovery
+assert 'cJSON_AddStringToObject(jevent, "rspServerAddress"' in discovery
+assert "cJSON_CreateString(smdp_list[i])" in discovery
 
 for field in ("reasonCode", "subjectCode", "subjectIdentifier", "message"):
     assert re.search(
@@ -52,6 +60,10 @@ prepare = download.index('jprint_progress("es10b_prepare_download", smdp)', prev
 assert metadata < preview < prepare
 assert len(re.findall(r"if \(interactive_preview\)", download)) == 1
 assert 'jprint_progress("preview", "y/n")' in download
+
+assert "length <= maximum_length" in events
+assert "copy[length] = '\\0'" in events
+assert "ES11_EVENT_ENTRIES_MAX" in events
 
 assert "PKG_VERSION:=$(LPAC_UPSTREAM_VERSION).444" in makefile
 assert "PKG_RELEASE:=1" in makefile
