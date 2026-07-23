@@ -1,0 +1,39 @@
+From: As Tsaqib <0xfiqks@gmail.com>
+Date: Mon, 20 Jul 2026 00:00:00 +0800
+Subject: [PATCH] profile: download: always gate interactive preview
+
+`profile download -p` only asked for confirmation when the provider supplied
+profile metadata. If metadata was absent, lpac continued directly into
+prepareDownload and profile installation without user approval.
+
+Keep metadata reporting conditional, but move the y/n gate outside that
+condition so EOF, an unavailable prompt, and every answer other than y/Y fail
+closed before es10b_prepare_download().
+---
+ src/applet/profile/download.c | 15 ++++++++-------
+ 1 file changed, 8 insertions(+), 7 deletions(-)
+
+--- a/src/applet/profile/download.c
++++ b/src/applet/profile/download.c
+@@ -243,13 +243,14 @@ static int applet_main(int argc, char **
+ 
+         jprint_progress_obj("es8p_meatadata_parse", jmetadata);
+ 
+-        if (interactive_preview) {
+-            char c;
+-            jprint_progress("preview", "y/n");
+-            c = getchar();
+-            if (c != 'y' && c != 'Y') {
+-                cancelled = 1;
+-            }
++    }
++
++    if (interactive_preview) {
++        int answer;
++        jprint_progress("preview", "y/n");
++        answer = getchar();
++        if (answer != 'y' && answer != 'Y') {
++            cancelled = 1;
+         }
+     }
+ 

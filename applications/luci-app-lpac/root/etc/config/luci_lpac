@@ -1,0 +1,3 @@
+config preferences 'profiles'
+	option refresh_prompted '0'
+	option refresh_default '0'

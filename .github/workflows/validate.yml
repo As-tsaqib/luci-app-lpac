@@ -1,0 +1,304 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Source and backend tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Install host dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake gettext libcurl4-openssl-dev libjson-c-dev pkg-config procps shellcheck util-linux
+
+      - name: Prepare LuCI validation tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build
+          git clone --filter=blob:none --depth 1 \
+            https://github.com/openwrt/luci.git build/luci
+          rm -rf build/luci/applications/luci-app-lpac
+          cp -a applications/luci-app-lpac build/luci/applications/
+          npm install --prefix build/luci --ignore-scripts --no-audit --no-fund
+
+      - name: Validate LuCI source and translations
+        shell: bash
+        run: |
+          set -euxo pipefail
+          (
+            cd build/luci
+            find applications/luci-app-lpac -type f \
+              \( -name '*.js' -o -name '*.json' -o -name '*.md' \) \
+              -print0 | xargs -0 ./node_modules/.bin/eslint
+            ./build/i18n-scan.pl applications/luci-app-lpac \
+              > "${GITHUB_WORKSPACE}/build/lpac.pot"
+          )
+
+          while IFS= read -r file; do
+            node --check "$file"
+          done < <(find applications/luci-app-lpac/htdocs -type f -name '*.js' -print)
+
+          node applications/luci-app-lpac/tests/frontend.js
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          for path in Path('applications/luci-app-lpac/root').rglob('*.json'):
+              json.loads(path.read_text())
+          PY
+
+          diff -u applications/luci-app-lpac/po/templates/lpac.pot build/lpac.pot
+          msgfmt --check --check-format \
+            -o /dev/null applications/luci-app-lpac/po/templates/lpac.pot
+          shellcheck applications/luci-app-lpac/tests/run-tests.sh
+          shellcheck applications/luci-app-lpac/tests/run-uci-compat.sh
+          shellcheck applications/luci-app-lpac/tests/run-supervisor-integration.sh
+          shellcheck \
+            applications/luci-app-lpac/root/usr/libexec/luci-lpac-supervisor \
+            packages/lpac/files/lpac.sh \
+            packages/lpac/test-patch-contracts.sh \
+            packages/lpac/test-version.sh
+          if git grep -nE '(2\.3\.0\.444|\.444-r|-444)' -- \
+            ':!.github/workflows/validate.yml'; then
+            echo 'Private -444 package versioning must not reappear.' >&2
+            exit 1
+          fi
+          git diff --check
+
+      - name: Validate bundled lpac patch series
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          mkdir -p build/lpac-source
+          source_archive=build/lpac-2.3.0.tar.gz
+          curl -fsSL \
+            https://codeload.github.com/estkme-group/lpac/tar.gz/refs/tags/v2.3.0 \
+            -o "${source_archive}"
+          grep -Fx \
+            'PKG_HASH:=661dffbd1e9e5732dab4a0bb0a9837d4906c8c66bd748bda262fe3e8d3e420f6' \
+            packages/lpac/Makefile
+          printf '%s  %s\n' \
+            '661dffbd1e9e5732dab4a0bb0a9837d4906c8c66bd748bda262fe3e8d3e420f6' \
+            "${source_archive}" | sha256sum -c -
+          tar -xzf "${source_archive}" \
+            -C build/lpac-source --strip-components=1
+
+          mapfile -t patch_files < <(
+            find packages/lpac/patches -maxdepth 1 -type f -name '*.patch' | sort
+          )
+          [ "${#patch_files[@]}" -eq 11 ]
+          printf '%s\n' "${patch_files[@]}" | grep -Fx \
+            'packages/lpac/patches/0030-fix-notification-sequence-zero.patch'
+          printf '%s\n' "${patch_files[@]}" | grep -Fx \
+            'packages/lpac/patches/0031-notification-parse-strict-uint32-sequences.patch'
+          printf '%s\n' "${patch_files[@]}" | grep -Fx \
+            'packages/lpac/patches/0040-profile-discovery-parse-every-option.patch'
+          printf '%s\n' "${patch_files[@]}" | grep -Fx \
+            'packages/lpac/patches/0041-profile-discovery-preserve-event-identifiers.patch'
+          printf '%s\n' "${patch_files[@]}" | grep -Fx \
+            'packages/lpac/patches/0050-profile-download-always-gate-preview.patch'
+          printf '%s\n' "${patch_files[@]}" | grep -Fx \
+            'packages/lpac/patches/0060-euicc-es9p-terminate-provider-status.patch'
+
+          for patch_file in packages/lpac/patches/*.patch; do
+            patch -d build/lpac-source -p1 --forward < "${patch_file}"
+          done
+
+          cc -std=gnu11 -ffunction-sections -fdata-sections \
+            -I build/lpac-source \
+            packages/lpac/test-env-bool.c \
+            build/lpac-source/utils/lpac/utils.c \
+            -Wl,--gc-sections \
+            -o build/lpac-env-bool-test
+          build/lpac-env-bool-test
+
+          cc -std=gnu11 -Wall -Wextra -Werror \
+            -I build/lpac-source \
+            packages/lpac/test-sequence-number.c \
+            build/lpac-source/src/applet/notification/notification_sequence.c \
+            -o build/lpac-sequence-number-test
+          build/lpac-sequence-number-test
+
+          cc -std=gnu11 -Wall -Wextra -Werror \
+            -I build/lpac-source \
+            packages/lpac/test-es11-events.c \
+            build/lpac-source/euicc/es11_event.c \
+            build/lpac-source/cjson/cJSON.c \
+            -lm \
+            -o build/lpac-es11-events-test
+          build/lpac-es11-events-test
+
+          packages/lpac/test-patch-contracts.sh \
+            build/lpac-source packages/lpac/Makefile
+
+          cmake -S build/lpac-source -B build/lpac-host \
+            -DLPAC_WITH_APDU_PCSC=OFF \
+            -DLPAC_WITH_APDU_AT=ON \
+            -DLPAC_WITH_APDU_UQMI=ON \
+            -DLPAC_WITH_APDU_MBIM=OFF \
+            -DLPAC_WITH_APDU_QMI_QRTR=OFF
+          cmake --build build/lpac-host --parallel
+
+          version_output="$(build/lpac-host/output/lpac version)"
+          printf '%s\n' "${version_output}" | grep -F '"code":0'
+          printf '%s\n' "${version_output}" | grep -F '"data":"2.3.0"'
+          if printf '%s\n' "${version_output}" | grep -F 'unknown'; then
+            exit 1
+          fi
+
+          driver_output="$(build/lpac-host/output/lpac driver list)"
+          printf '%s\n' "${driver_output}" | grep -F '"uqmi"'
+
+          cmake -S build/lpac-source -B build/lpac-host-no-uqmi \
+            -DLPAC_WITH_APDU_PCSC=OFF \
+            -DLPAC_WITH_APDU_AT=ON \
+            -DLPAC_WITH_APDU_UQMI=OFF \
+            -DLPAC_WITH_APDU_MBIM=OFF \
+            -DLPAC_WITH_APDU_QMI_QRTR=OFF
+          cmake --build build/lpac-host-no-uqmi --parallel
+
+          disabled_driver_output="$(build/lpac-host-no-uqmi/output/lpac driver list)"
+          if printf '%s\n' "${disabled_driver_output}" | grep -F '"uqmi"'; then
+            echo 'The uqmi driver remained enabled after LPAC_WITH_APDU_UQMI=OFF' >&2
+            exit 1
+          fi
+
+      - name: Build host UCI and ucode variants with real uloop
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          mkdir -p build/libubox
+          git -C build/libubox init
+          git -C build/libubox remote add origin https://github.com/openwrt/libubox.git
+          git -C build/libubox fetch --depth 1 origin \
+            7dd127841e82eb1cfb61185da37dde7b9bd9ba6d
+          git -C build/libubox checkout --detach FETCH_HEAD
+
+          cmake -S build/libubox -B build/libubox-out \
+            -DBUILD_EXAMPLES=OFF \
+            -DBUILD_LUA=OFF \
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/build/host"
+          cmake --build build/libubox-out --parallel --target install
+
+          mkdir -p build/uci
+          git -C build/uci init
+          git -C build/uci remote add origin https://github.com/openwrt/uci.git
+          git -C build/uci fetch --depth 1 origin \
+            66127cd76c5d0bd46d5a90302cc6110f53a4e2f8
+          git -C build/uci checkout --detach FETCH_HEAD
+
+          cmake -S build/uci -B build/uci-out \
+            -DBUILD_LUA=OFF \
+            -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/build/host" \
+            -DCMAKE_INSTALL_PREFIX="${GITHUB_WORKSPACE}/build/host"
+          cmake --build build/uci-out --parallel
+          cmake --install build/uci-out
+
+          test -x "${GITHUB_WORKSPACE}/build/host/bin/uci"
+          LD_LIBRARY_PATH="${GITHUB_WORKSPACE}/build/host/lib" \
+          REQUIRE_UCI=1 \
+          UCI_BIN="${GITHUB_WORKSPACE}/build/host/bin/uci" \
+            applications/luci-app-lpac/tests/run-uci-compat.sh
+
+          mkdir -p build/ucode
+          git -C build/ucode init
+          git -C build/ucode remote add origin https://github.com/jow-/ucode.git
+          git -C build/ucode fetch --depth 1 origin \
+            b885dd0fe1e974551fb1233ca5f3aa74d80b74d9
+          git -C build/ucode checkout --detach FETCH_HEAD
+          git -C build/ucode fetch --depth 1 origin \
+            85922056ef7abeace3cca3ab28bc1ac2d88e31b1
+          git -C build/ucode worktree add --detach \
+            "${GITHUB_WORKSPACE}/build/ucode-25" \
+            85922056ef7abeace3cca3ab28bc1ac2d88e31b1
+          git -C build/ucode fetch --depth 1 origin \
+            3f64c8089bf3ea4847c96b91df09fbfcaec19e1d
+          git -C build/ucode worktree add --detach \
+            "${GITHUB_WORKSPACE}/build/ucode-24" \
+            3f64c8089bf3ea4847c96b91df09fbfcaec19e1d
+
+          build_ucode() {
+            local source_dir=$1
+            local output_dir=$2
+
+            cmake -S "${source_dir}" -B "${output_dir}" \
+              -DBUILD_OPTIMIZE_SIZE=OFF \
+              -DCMAKE_PREFIX_PATH="${GITHUB_WORKSPACE}/build/host" \
+              -DDEBUG_SUPPORT=OFF \
+              -DFS_SUPPORT=ON \
+              -DIO_SUPPORT=OFF \
+              -DMATH_SUPPORT=OFF \
+              -DUBUS_SUPPORT=OFF \
+              -DUCI_SUPPORT=OFF \
+              -DRTNL_SUPPORT=OFF \
+              -DNL80211_SUPPORT=OFF \
+              -DRESOLV_SUPPORT=OFF \
+              -DSTRUCT_SUPPORT=OFF \
+              -DULOOP_SUPPORT=ON \
+              -DLOG_SUPPORT=OFF \
+              -DSOCKET_SUPPORT=OFF \
+              -DZLIB_SUPPORT=OFF \
+              -DDIGEST_SUPPORT=OFF
+            cmake --build "${output_dir}" --parallel
+          }
+
+          build_ucode build/ucode build/ucode-out
+          build_ucode build/ucode-25 build/ucode-25-out
+          build_ucode build/ucode-24 build/ucode-24-out
+
+      - name: Run backend and real supervisor tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          for output_dir in \
+            build/ucode-out \
+            build/ucode-25-out \
+            build/ucode-24-out; do
+            echo "Testing with ${output_dir}"
+            PATH="${GITHUB_WORKSPACE}/${output_dir}:${PATH}" \
+              applications/luci-app-lpac/tests/run-tests.sh
+            "${output_dir}/ucode" \
+              -c,dynlink=fs,dynlink=ubus,dynlink=uci,dynlink=uloop \
+              -o /dev/null \
+              applications/luci-app-lpac/root/usr/share/rpcd/ucode/luci.lpac
+
+            UCODE_BIN="${GITHUB_WORKSPACE}/${output_dir}/ucode" \
+            UCODE_MODULE_DIR="${GITHUB_WORKSPACE}/${output_dir}" \
+            UCODE_RUNTIME_LIB_DIR="${GITHUB_WORKSPACE}/build/host/lib" \
+              applications/luci-app-lpac/tests/run-supervisor-integration.sh
+          done

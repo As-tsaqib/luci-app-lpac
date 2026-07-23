@@ -1,0 +1,5389 @@
+// SPDX-License-Identifier: Apache-2.0
+
+'use strict';
+
+import * as fs from 'fs';
+import {
+	connect,
+	STATUS_NOT_FOUND,
+	STATUS_NOT_SUPPORTED,
+	STATUS_OK,
+	STATUS_TIMEOUT
+} from 'ubus';
+import { cursor } from 'uci';
+import { handle, process, timer, ULOOP_READ } from 'uloop';
+
+const LPAC_PATH = '/usr/bin/lpac';
+const LPAC_BINARY_PATH = '/usr/lib/lpac';
+const ENV_PATH = '/usr/bin/env';
+const FLOCK_PATH = '/usr/bin/flock';
+const SETSID_PATH = '/usr/bin/setsid';
+const KILL_PATH = '/bin/kill';
+const SHELL_PATH = '/bin/sh';
+const SUPERVISOR_PATH = '/usr/libexec/luci-lpac-supervisor';
+const LOCK_PATH = '/var/run/luci-lpac.lock';
+const SAFETY_CONFIG = 'lpac_safety';
+const SAFETY_PATH = '/etc/config/lpac_safety';
+const SAFETY_SECTION = 'state';
+const SAFETY_SCHEMA = '1';
+const SAFETY_NOTIFICATION_MAX = 256;
+const SAFETY_NOTIFICATION_JSON_MAX = 32768;
+const PREFERENCE_CONFIG = 'luci_lpac';
+const PREFERENCE_SECTION = 'profiles';
+const DEFAULT_AID = 'A0000005591010FFFFFFFF8900000100';
+const DOWNLOAD_TIMEOUT_MS = 600000;
+const DOWNLOAD_PREVIEW_TIMEOUT_MS = 120000;
+const DOWNLOAD_CANCEL_GRACE_MS = 10000;
+const DOWNLOAD_JOB_HISTORY = 8;
+const DOWNLOAD_OUTPUT_MAX_BYTES = 65536;
+const DOWNLOAD_OUTPUT_MAX_LINE_BYTES = 16384;
+const DOWNLOAD_OUTPUT_MAX_LINES = 256;
+const DOWNLOAD_OUTPUT_DRAIN_BYTES = 8192;
+const DOWNLOAD_DECISION_RANDOM_BYTES = 24;
+const DISCOVERY_RESULT_MAX = 64;
+const DISCOVERY_EVENT_ID_MAX_LENGTH = 4096;
+const DISCOVERY_ENTRY_TTL_SECONDS = 300;
+const DISCOVERY_TIMEOUT_MS = 180000;
+const DISCOVERY_OUTPUT_MAX_BYTES = 1048576;
+const DISCOVERY_OUTPUT_MAX_LINE_BYTES = 1048576;
+const DISCOVERY_OUTPUT_MAX_LINES = 128;
+const NOTIFICATION_TIMEOUT_MS = 120000;
+const NOTIFICATION_OUTPUT_MAX_BYTES = 65536;
+const NOTIFICATION_OUTPUT_MAX_LINE_BYTES = 16384;
+const NOTIFICATION_OUTPUT_MAX_LINES = 64;
+const RPC_OPERATION_TIMEOUT_MS = 30000;
+const RPC_OPERATION_CHILD_TIMEOUT_SECONDS = 25;
+const RPC_OUTPUT_MAX_BYTES = 65536;
+const RPC_OUTPUT_MAX_LINE_BYTES = 16384;
+const RPC_OUTPUT_MAX_LINES = 256;
+const SUPERVISOR_DRAIN_BYTES = 8192;
+const SUPERVISOR_KILL_RETRY_MS = 1000;
+const SUPERVISOR_CLEANUP_RETRIES = 5;
+const SUPERVISOR_IDENTITY_MAX_BYTES = 64;
+const ASYNC_JOB_HISTORY = 8;
+/*
+ * uloop.process() shifts away waitpid() signal bits, so a signalled supervisor
+ * appears to exit with zero. Reserve nonzero wrapper statuses for every normal
+ * outcome, leaving raw zero unambiguously unsuccessful.
+ */
+const DOWNLOAD_EXIT_SUCCESS = 64;
+const DOWNLOAD_EXIT_NOT_FOUND = 65;
+const DOWNLOAD_EXIT_NOT_EXECUTABLE = 66;
+const DOWNLOAD_EXIT_FAILED = 67;
+const DOWNLOAD_EXIT_SIGNALED = 68;
+const DOWNLOAD_EXIT_PIPE_FAILED = 69;
+const CHILD_EXIT_SUCCESS = 64;
+const CHILD_EXIT_NOT_FOUND = 65;
+const CHILD_EXIT_NOT_EXECUTABLE = 66;
+const CHILD_EXIT_FAILED = 67;
+const CHILD_EXIT_SIGNALED = 68;
+const CHILD_EXIT_PIPE_FAILED = 69;
+const CHILD_EXIT_TIMEOUT = 70;
+const DOWNLOAD_ENV = { PATH: '/usr/sbin:/usr/bin:/sbin:/bin' };
+const ACTIVATION_CODE_MAX_LENGTH = 4096;
+/*
+ * ucode length() counts bytes. This allowance admits dozens of three-byte
+ * copy/paste marks plus whitespace around a maximum-length canonical code,
+ * while bounding normalization work before inspecting either edge.
+ */
+const ACTIVATION_EDGE_OVERHEAD = 256;
+const ACTIVATION_CODE_RAW_MAX_LENGTH =
+	ACTIVATION_CODE_MAX_LENGTH + ACTIVATION_EDGE_OVERHEAD;
+const ACTIVATION_EDGE_MARKS = [
+	'\u00ad', '\u034f', '\u061c', '\u180e', '\u200b', '\u200c', '\u200d',
+	'\u200e', '\u200f', '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+	'\u2060', '\u2061', '\u2062', '\u2063', '\u2064', '\u2066', '\u2067',
+	'\u2068', '\u2069', '\ufeff'
+];
+let read_config;
+let download_job = null;
+let download_process = null;
+let download_timer = null;
+let download_preview_timer = null;
+let download_drain_timer = null;
+let download_kill_timer = null;
+let download_input_writer = null;
+let download_output_reader = null;
+let download_output_watch = null;
+let download_liveness_writer = null;
+let download_job_id = 0;
+let download_jobs = {};
+let download_job_order = [];
+/* EventID values remain server-side and are never exposed over ubus. */
+let discovery_entries = {};
+let discovery_entry_order = [];
+let discovery_timer = null;
+let discovery_generation = 0;
+let async_job_id = 0;
+let discovery_job = null;
+let discovery_jobs = {};
+let discovery_job_order = [];
+let notification_job = null;
+let notification_jobs = {};
+let notification_job_order = [];
+let recovery_safety_incident = null;
+let recovery_profiles_refreshed = false;
+let recovery_notifications_refreshed = false;
+let recovery_notification_guards = {};
+
+/*
+ * Keep the connection alive for the lifetime of the rpcd script.  Its nested
+ * call timeout is deliberately longer than rpcd's maximum configurable
+ * 600-second execution timeout, so this client does not abandon the nested
+ * call before file.exec returns a status.
+ */
+const ubus = connect(null, 610);
+
+const INVALID = {};
+const DISCOVERY_ENTROPY_FAILED = {};
+const DISCOVERY_STORAGE_FAILED = {};
+const SAFETY_UPDATE_FAILED = {};
+const SAFETY_STATE_BECAME_VALID = {};
+
+function success(data) {
+	return {
+		success: true,
+		code: 0,
+		message: 'success',
+		data
+	};
+}
+
+function failure(error, message, code) {
+	const result = {
+		success: false,
+		error,
+		message
+	};
+
+	if (type(code) == 'int')
+		result.code = code;
+
+	return result;
+}
+
+function safe_text(value, max_length) {
+	if (value === null)
+		return null;
+
+	if (type(value) != 'string' || length(value) > max_length ||
+	    match(value, /[[:cntrl:]]/) !== null)
+		return null;
+
+	return value;
+}
+
+function safe_uint(value) {
+	return (type(value) == 'int' && value >= 0) ? value : null;
+}
+
+function safe_text_list(value, max_items, max_length) {
+	const result = [];
+
+	if (type(value) != 'array')
+		return result;
+
+	for (let item in value) {
+		const text = safe_text(item, max_length);
+
+		if (text !== null)
+			push(result, text);
+
+		if (length(result) >= max_items)
+			break;
+	}
+
+	return result;
+}
+
+function safe_hex_list(value, max_items) {
+	const result = [];
+
+	if (type(value) != 'array')
+		return result;
+
+	for (let item in value) {
+		if (type(item) == 'string' && length(item) >= 2 &&
+		    length(item) <= 128 && length(item) % 2 == 0 &&
+		    match(item, /[[:cntrl:][:space:]]/) === null &&
+		    match(item, /^[0-9A-Fa-f]+$/) !== null)
+			push(result, uc(item));
+
+		if (length(result) >= max_items)
+			break;
+	}
+
+	return result;
+}
+
+function valid_iccid(value) {
+	return type(value) == 'string' && length(value) >= 18 &&
+		length(value) <= 20 &&
+		match(value, /[[:cntrl:][:space:]]/) === null &&
+		match(value, /^[0-9]+$/) !== null;
+}
+
+function valid_profile_id(value) {
+	return valid_iccid(value) ||
+		(type(value) == 'string' && length(value) == 32 &&
+		 match(value, /[[:cntrl:][:space:]]/) === null &&
+		 match(value, /^[0-9A-Fa-f]+$/) !== null);
+}
+
+function valid_aid(value) {
+	return type(value) == 'string' && length(value) == 32 &&
+		match(value, /[[:cntrl:][:space:]]/) === null &&
+		match(value, /^[0-9A-Fa-f]+$/) !== null;
+}
+
+function optional_text(value, max_length) {
+	if (value === null || value === '')
+		return '';
+
+	return safe_text(value, max_length);
+}
+
+function canonical_uint32(value) {
+	if (type(value) != 'string' ||
+	    match(value, /^(0|[1-9][0-9]{0,9})$/) === null)
+		return null;
+
+	const number = int(value);
+
+	return number >= 0 && number <= 4294967295 && `${number}` == value
+		? value : null;
+}
+
+function activation_edge_mark_length(value, offset, available) {
+	for (let mark in ACTIVATION_EDGE_MARKS) {
+		const mark_length = length(mark);
+
+		if (available >= mark_length &&
+		    substr(value, offset, mark_length) == mark)
+			return mark_length;
+	}
+
+	return 0;
+}
+
+function activation_edge_space(value, offset) {
+	return index(' \t\r\n', substr(value, offset, 1)) >= 0;
+}
+
+function normalize_activation_code(value) {
+	if (type(value) != 'string' ||
+	    length(value) > ACTIVATION_CODE_RAW_MAX_LENGTH)
+		return null;
+
+	let start = 0;
+	let end = length(value);
+
+	while (start < end) {
+		if (activation_edge_space(value, start)) {
+			start++;
+			continue;
+		}
+
+		const mark_length = activation_edge_mark_length(value, start, end - start);
+
+		if (!mark_length)
+			break;
+
+		start += mark_length;
+	}
+
+	while (start < end) {
+		if (activation_edge_space(value, end - 1)) {
+			end--;
+			continue;
+		}
+
+		let mark_length = 0;
+
+		for (let mark in ACTIVATION_EDGE_MARKS) {
+			const candidate_length = length(mark);
+
+			if (end - start >= candidate_length &&
+			    substr(value, end - candidate_length, candidate_length) == mark) {
+				mark_length = candidate_length;
+				break;
+			}
+		}
+
+		if (!mark_length)
+			break;
+
+		end -= mark_length;
+	}
+
+	return substr(value, start, end - start);
+}
+
+function has_activation_format_mark(value) {
+	for (let mark in ACTIVATION_EDGE_MARKS)
+		if (index(value, mark) >= 0)
+			return true;
+
+	return false;
+}
+
+function canonicalize_activation_code(value) {
+	const has_scheme = substr(value, 0, 4) == 'LPA:';
+	const fields = split(has_scheme ? substr(value, 4) : value, '$');
+
+	/*
+	 * lpac 2.3.0 mistakes an empty fifth field for a required confirmation
+	 * code. Omitting that empty optional flag preserves the intended meaning.
+	 */
+	if (length(fields) == 5 && fields[4] == '')
+		pop(fields);
+
+	return (has_scheme ? 'LPA:' : '') + join('$', fields);
+}
+
+function valid_smdp(value) {
+	if (type(value) != 'string' || length(value) < 1 || length(value) > 255 ||
+	    match(value, /[[:cntrl:][:space:]]/) !== null)
+		return false;
+
+	let parsed = match(value, /^\[([0-9A-Fa-f:.]+)\](:[0-9]{1,5})?$/);
+
+	if (parsed !== null) {
+		if (type(iptoarr(parsed[1])) != 'array' ||
+		    length(iptoarr(parsed[1])) != 16)
+			return false;
+
+		if (parsed[2] !== null) {
+			const port = int(substr(parsed[2], 1));
+
+			if (port < 1 || port > 65535)
+				return false;
+		}
+
+		return true;
+	}
+
+	parsed = match(value, /^([A-Za-z0-9.-]+)(:[0-9]{1,5})?$/);
+
+	if (parsed === null)
+		return false;
+
+	const host = parsed[1];
+
+	if (length(host) > 253 || substr(host, 0, 1) == '.' ||
+	    substr(host, length(host) - 1) == '.')
+		return false;
+
+	if (match(host, /^[0-9.]+$/) !== null) {
+		if (type(iptoarr(host)) != 'array' || length(iptoarr(host)) != 4)
+			return false;
+	}
+	else {
+		for (let label in split(host, '.')) {
+			if (!length(label) || length(label) > 63 ||
+			    match(label, /^[A-Za-z0-9-]+$/) === null ||
+			    substr(label, 0, 1) == '-' ||
+			    substr(label, length(label) - 1) == '-')
+				return false;
+		}
+	}
+
+	if (parsed[2] !== null) {
+		const port = int(substr(parsed[2], 1));
+
+		if (port < 1 || port > 65535)
+			return false;
+	}
+
+	return true;
+}
+
+function valid_matching_id(value) {
+	return type(value) == 'string' && length(value) >= 1 && length(value) <= 255 &&
+		match(value, /[[:cntrl:][:space:]]/) === null &&
+		match(value, /^[A-Za-z0-9-]+$/) !== null;
+}
+
+function valid_imei(value) {
+	return type(value) == 'string' && length(value) >= 14 &&
+		length(value) <= 16 &&
+		match(value, /[[:cntrl:][:space:]]/) === null &&
+		match(value, /^[0-9]+$/) !== null;
+}
+
+function valid_activation_code(value, confirmation_code) {
+	if (type(value) != 'string' || length(value) < 5 ||
+	    length(value) > ACTIVATION_CODE_MAX_LENGTH ||
+	    match(value, /[[:cntrl:][:space:]]/) !== null ||
+	    has_activation_format_mark(value))
+		return false;
+
+	let code = value;
+
+	if (substr(code, 0, 4) == 'LPA:')
+		code = substr(code, 4);
+
+	const fields = split(code, '$');
+
+	if (length(fields) < 3 || length(fields) > 5 || fields[0] != '1' ||
+	    !valid_smdp(fields[1]) ||
+	    (length(fields[2]) && !valid_matching_id(fields[2])))
+		return false;
+
+	if (length(fields) >= 4 && optional_text(fields[3], 255) === null)
+		return false;
+
+	if (length(fields) == 5 && fields[4] != '' && fields[4] != '0' && fields[4] != '1')
+		return false;
+
+	return length(fields) < 5 || fields[4] != '1' || length(confirmation_code) > 0;
+}
+
+function valid_device_path(value) {
+	if (type(value) != 'string' || length(value) < 6 || length(value) > 128 ||
+	    match(value, /[[:cntrl:][:space:]]/) !== null ||
+	    match(value, /^\/dev\/[A-Za-z0-9._:+@,\/-]+$/) === null)
+		return false;
+
+	const parts = split(value, '/');
+
+	for (let i = 2; i < length(parts); i++)
+		if (!length(parts[i]) || parts[i] == '.' || parts[i] == '..')
+			return false;
+
+	return true;
+}
+
+function valid_uqmi_device(value) {
+	return type(value) == 'string' && length(value) >= 13 &&
+		length(value) <= 128 &&
+		match(value, /[[:cntrl:][:space:]]/) === null &&
+		match(value, /^\/dev\/(cdc-wdm[0-9]+|wwan[0-9]+qmi[0-9]+)$/) !== null;
+}
+
+function normalize_info(data) {
+	if (type(data) != 'object')
+		return INVALID;
+
+	const addresses_in = (type(data.EuiccConfiguredAddresses) == 'object')
+		? data.EuiccConfiguredAddresses : {};
+	const info2_in = (type(data.EUICCInfo2) == 'object')
+		? data.EUICCInfo2 : {};
+	const resources_in = (type(info2_in.extCardResource) == 'object')
+		? info2_in.extCardResource : {};
+	const certification_in = (type(info2_in.certificationDataObject) == 'object')
+		? info2_in.certificationDataObject : {};
+	const eid = (type(data.eidValue) == 'string' &&
+		length(data.eidValue) == 32 &&
+		match(data.eidValue, /[[:cntrl:][:space:]]/) === null &&
+		match(data.eidValue, /^[0-9]+$/) !== null)
+		? data.eidValue : null;
+
+	if (eid === null)
+		return INVALID;
+
+	return {
+		eidValue: eid,
+		EuiccConfiguredAddresses: {
+			defaultDpAddress: safe_text(addresses_in.defaultDpAddress, 255),
+			rootDsAddress: safe_text(addresses_in.rootDsAddress, 255)
+		},
+		EUICCInfo2: {
+			profileVersion: safe_text(info2_in.profileVersion, 64),
+			svn: safe_text(info2_in.svn, 64),
+			euiccFirmwareVer: safe_text(info2_in.euiccFirmwareVer, 128),
+			extCardResource: {
+				installedApplication: safe_uint(resources_in.installedApplication),
+				freeNonVolatileMemory: safe_uint(resources_in.freeNonVolatileMemory),
+				freeVolatileMemory: safe_uint(resources_in.freeVolatileMemory)
+			},
+			uiccCapability: safe_text_list(info2_in.uiccCapability, 64, 64),
+			ts102241Version: safe_text(info2_in.ts102241Version, 64),
+			globalplatformVersion: safe_text(info2_in.globalplatformVersion, 64),
+			rspCapability: safe_text_list(info2_in.rspCapability, 64, 64),
+			euiccCiPKIdListForVerification:
+				safe_hex_list(info2_in.euiccCiPKIdListForVerification, 64),
+			euiccCiPKIdListForSigning:
+				safe_hex_list(info2_in.euiccCiPKIdListForSigning, 64),
+			euiccCategory: safe_text(info2_in.euiccCategory, 64),
+			forbiddenProfilePolicyRules:
+				safe_text_list(info2_in.forbiddenProfilePolicyRules, 64, 64),
+			ppVersion: safe_text(info2_in.ppVersion, 64),
+			sasAcreditationNumber: safe_text(info2_in.sasAcreditationNumber, 128),
+			sasAccreditationNumber: safe_text(info2_in.sasAccreditationNumber, 128),
+			certificationDataObject: {
+				platformLabel: safe_text(certification_in.platformLabel, 255),
+				discoveryBaseURL: safe_text(certification_in.discoveryBaseURL, 255)
+			}
+		}
+	};
+}
+
+function random_secret_token() {
+	let file = null;
+	let bytes = null;
+
+	try {
+		file = fs.open('/dev/urandom', 're');
+
+		if (file)
+			bytes = file.read(DOWNLOAD_DECISION_RANDOM_BYTES);
+	}
+	catch (e) {
+		bytes = null;
+	}
+
+	if (file) {
+		try {
+			if (file.close() !== true)
+				bytes = null;
+		}
+		catch (e) {
+			bytes = null;
+		}
+	}
+
+	if (type(bytes) != 'string' ||
+	    length(bytes) != DOWNLOAD_DECISION_RANDOM_BYTES)
+		return null;
+
+	const token = replace(replace(b64enc(bytes), /\+/g, '-'), /\//g, '_');
+
+	return match(token, /^[A-Za-z0-9_-]{32}$/) !== null ? token : null;
+}
+
+function valid_secret_token(value) {
+	return type(value) == 'string' && length(value) == 32 &&
+		match(value, /[[:cntrl:][:space:]]/) === null &&
+		match(value, /^[A-Za-z0-9_-]+$/) !== null;
+}
+
+function constant_time_equal(left, right) {
+	if (type(left) != 'string' || type(right) != 'string')
+		return false;
+
+	let difference = length(left) ^ length(right);
+	const compared = length(left) > length(right) ? length(left) : length(right);
+
+	for (let i = 0; i < compared; i++)
+		difference |= (ord(left, i) || 0) ^ (ord(right, i) || 0);
+
+	return difference == 0;
+}
+
+function has_exact_keys(value, allowed) {
+	if (type(value) != 'object')
+		return false;
+
+	for (let key in value)
+		if (!(key in allowed))
+			return false;
+
+	for (let key in allowed)
+		if (!(key in value))
+			return false;
+
+	return true;
+}
+
+function empty_safety_state() {
+	return {
+		download_incident: null,
+		profiles_refreshed: false,
+		notifications_refreshed: false,
+		notifications: {}
+	};
+}
+
+function valid_safety_file(stat, require_mode) {
+	return type(stat) == 'object' && stat.type == 'file' && stat.uid == 0 &&
+		stat.nlink == 1 && (!require_mode || stat.mode == 0o600);
+}
+
+function initial_safety_text() {
+	return "config safety 'state'\n" +
+		"\toption schema '1'\n" +
+		"\toption profiles_refreshed '0'\n" +
+		"\toption notifications_refreshed '0'\n" +
+		"\toption notifications '{}'\n";
+}
+
+function ensure_safety_file() {
+	let stat;
+	let file = null;
+
+	try {
+		stat = fs.lstat(SAFETY_PATH);
+
+		if (stat !== null && !valid_safety_file(stat, false))
+			return false;
+
+		if (stat === null) {
+			file = fs.open(SAFETY_PATH, 'w', 0o600);
+
+			if (!file)
+				return false;
+
+			const initial = initial_safety_text();
+
+			if (file.write(initial) != length(initial)) {
+				file.close();
+				return false;
+			}
+
+			try { file.flush(); }
+			catch (e) { /* close() below remains the final best effort. */ }
+
+			if (file.close() !== true)
+				return false;
+
+			file = null;
+		}
+
+		if (fs.chmod(SAFETY_PATH, 0o600) !== true)
+			return false;
+
+		return valid_safety_file(fs.lstat(SAFETY_PATH), true);
+	}
+	catch (e) {
+		if (file) {
+			try { file.close(); }
+			catch (close_error) { /* Fail closed below. */ }
+		}
+
+		return false;
+	}
+}
+
+let load_safety_state;
+let safety_state_text;
+let same_safety_state;
+
+function repair_safety_file(desired_state) {
+	const replacement = desired_state || empty_safety_state();
+	const replacement_text = safety_state_text(replacement);
+
+	if (replacement_text === null || load_safety_state() !== null)
+		return false;
+
+	let current;
+
+	try {
+		current = fs.lstat(SAFETY_PATH);
+
+		if (!valid_safety_file(current, false) ||
+		    fs.chmod(SAFETY_PATH, 0o600) !== true ||
+		    !valid_safety_file(fs.lstat(SAFETY_PATH), true))
+			return false;
+	}
+	catch (e) {
+		return false;
+	}
+
+	const token = random_secret_token();
+
+	if (!valid_secret_token(token))
+		return false;
+
+	const temporary = `${SAFETY_PATH}.tmp.${token}`;
+	let file = null;
+	let renamed = false;
+
+	try {
+		file = fs.open(temporary, 'w', 0o600);
+
+		if (!file)
+			die('temporary open failed');
+
+		if (file.write(replacement_text) != length(replacement_text))
+			die('temporary write failed');
+
+		try { file.flush(); }
+		catch (e) { /* close() below remains the final best effort. */ }
+
+		if (file.close() !== true)
+			die('temporary close failed');
+
+		file = null;
+
+		if (fs.chmod(temporary, 0o600) !== true ||
+		    !valid_safety_file(fs.lstat(temporary), true) ||
+		    !valid_safety_file(fs.lstat(SAFETY_PATH), true) ||
+		    fs.rename(temporary, SAFETY_PATH) !== true)
+			die('temporary rename failed');
+
+		renamed = true;
+	}
+	catch (e) {
+		renamed = false;
+	}
+
+	if (file) {
+		try { file.close(); }
+		catch (e) { /* Cleanup continues. */ }
+	}
+
+	if (!renamed) {
+		try { fs.unlink(temporary); }
+		catch (e) { /* A failed private temporary remains mode 0600. */ }
+		return false;
+	}
+
+	try {
+		return valid_safety_file(fs.lstat(SAFETY_PATH), true) &&
+			same_safety_state(load_safety_state(), replacement);
+	}
+	catch (e) {
+		return false;
+	}
+}
+
+function safety_notification_state(value) {
+	return index([
+		'provider_delivery_possible',
+		'provider_outcome_unknown',
+		'provider_accepted_local_record_retained',
+		'provider_accepted_remove_failed'
+	], value) >= 0;
+}
+
+function normalize_safety_notifications(value) {
+	if (type(value) != 'object')
+		return null;
+
+	const normalized = {};
+	let count = 0;
+
+	for (let seq in value) {
+		const record = value[seq];
+
+		if (canonical_uint32(seq) === null ||
+		    !has_exact_keys(record, { incident: true, state: true }) ||
+		    !valid_secret_token(record.incident) ||
+		    !safety_notification_state(record.state) ||
+		    ++count > SAFETY_NOTIFICATION_MAX)
+			return null;
+
+		normalized[seq] = {
+			incident: record.incident,
+			state: record.state
+		};
+	}
+
+	return normalized;
+}
+
+function encode_safety_state(state) {
+	if (!has_exact_keys(state, {
+		download_incident: true,
+		profiles_refreshed: true,
+		notifications_refreshed: true,
+		notifications: true
+	    }) ||
+	    (state.download_incident !== null &&
+		!valid_secret_token(state.download_incident)) ||
+	    type(state.profiles_refreshed) != 'bool' ||
+	    type(state.notifications_refreshed) != 'bool')
+		return null;
+
+	const notifications = normalize_safety_notifications(state.notifications);
+
+	if (notifications === null)
+		return null;
+
+	let encoded;
+
+	try { encoded = sprintf('%J', notifications); }
+	catch (e) { return null; }
+
+	if (type(encoded) != 'string' ||
+	    length(encoded) > SAFETY_NOTIFICATION_JSON_MAX)
+		return null;
+
+	return {
+		state: {
+			download_incident: state.download_incident,
+			profiles_refreshed: state.profiles_refreshed,
+			notifications_refreshed: state.notifications_refreshed,
+			notifications
+		},
+		notifications: encoded
+	};
+}
+
+safety_state_text = function(state) {
+	const encoded = encode_safety_state(state);
+
+	if (encoded === null)
+		return null;
+
+	let text = "config safety 'state'\n" +
+		"\toption schema '1'\n";
+
+	if (encoded.state.download_incident !== null)
+		text += "\toption download_incident '" +
+			encoded.state.download_incident + "'\n";
+
+	return text +
+		"\toption profiles_refreshed '" +
+			(encoded.state.profiles_refreshed ? '1' : '0') + "'\n" +
+		"\toption notifications_refreshed '" +
+			(encoded.state.notifications_refreshed ? '1' : '0') + "'\n" +
+		"\toption notifications '" + encoded.notifications + "'\n";
+};
+
+same_safety_state = function(left, right) {
+	if (type(left) != 'object' || type(right) != 'object' ||
+	    type(left.profiles_refreshed) != 'bool' ||
+	    type(right.profiles_refreshed) != 'bool' ||
+	    type(left.notifications_refreshed) != 'bool' ||
+	    type(right.notifications_refreshed) != 'bool' ||
+	    left.profiles_refreshed != right.profiles_refreshed ||
+	    left.notifications_refreshed != right.notifications_refreshed ||
+	    (left.download_incident === null) !=
+		(right.download_incident === null) ||
+	    (left.download_incident !== null &&
+		!constant_time_equal(left.download_incident,
+			right.download_incident)))
+		return false;
+
+	const left_notifications = normalize_safety_notifications(left.notifications);
+	const right_notifications = normalize_safety_notifications(right.notifications);
+
+	if (left_notifications === null || right_notifications === null)
+		return false;
+
+	let left_count = 0;
+	let right_count = 0;
+
+	for (let seq, record in left_notifications) {
+		const other = right_notifications[seq];
+
+		left_count++;
+
+		if (!other || record.state != other.state ||
+		    !constant_time_equal(record.incident, other.incident))
+			return false;
+	}
+
+	for (let ignored in right_notifications)
+		right_count++;
+
+	return left_count == right_count;
+};
+
+function read_exact_safety_section(uci) {
+	const allowed = {
+		'.anonymous': true,
+		'.index': true,
+		'.name': true,
+		'.type': true,
+		schema: true,
+		download_incident: true,
+		profiles_refreshed: true,
+		notifications_refreshed: true,
+		notifications: true
+	};
+	let section = null;
+	let count = 0;
+	let valid = true;
+
+	try {
+		uci.foreach(SAFETY_CONFIG, null, function(candidate) {
+			count++;
+
+			if (count != 1 || type(candidate) != 'object' ||
+			    candidate['.name'] != SAFETY_SECTION ||
+			    candidate['.type'] != 'safety') {
+				valid = false;
+				return false;
+			}
+
+			for (let key in candidate) {
+				if (!(key in allowed)) {
+					valid = false;
+					return false;
+				}
+			}
+
+			section = candidate;
+		});
+	}
+	catch (e) {
+		valid = false;
+	}
+
+	return valid && count == 1 ? section : null;
+}
+
+function decode_safety_section(section) {
+	if (section === null)
+		return null;
+
+	const schema = section.schema;
+	const has_incident = 'download_incident' in section;
+	const incident = section.download_incident;
+	const profiles = section.profiles_refreshed;
+	const notifications_refreshed = section.notifications_refreshed;
+	const encoded = section.notifications;
+
+	if (schema !== SAFETY_SCHEMA ||
+	    (has_incident && (type(incident) != 'string' ||
+		(length(incident) && !valid_secret_token(incident)))) ||
+	    index([ '0', '1' ], profiles) < 0 ||
+	    index([ '0', '1' ], notifications_refreshed) < 0 ||
+	    type(encoded) != 'string' ||
+	    length(encoded) > SAFETY_NOTIFICATION_JSON_MAX)
+		return null;
+
+	let parsed;
+
+	try { parsed = json(encoded); }
+	catch (e) { return null; }
+
+	const normalized = normalize_safety_notifications(parsed);
+
+	if (normalized === null)
+		return null;
+
+	return {
+		download_incident: has_incident && length(incident)
+			? incident : null,
+		profiles_refreshed: profiles == '1',
+		notifications_refreshed: notifications_refreshed == '1',
+		notifications: normalized
+	};
+}
+
+load_safety_state = function() {
+	if (!ensure_safety_file())
+		return null;
+
+	let uci = null;
+	let state = null;
+
+	try {
+		uci = cursor();
+
+		if (uci && uci.load(SAFETY_CONFIG))
+			state = decode_safety_section(read_exact_safety_section(uci));
+	}
+	catch (e) {
+		state = null;
+	}
+
+	if (uci) {
+		try { uci.unload(SAFETY_CONFIG); }
+		catch (e) { state = null; }
+	}
+
+	return state;
+};
+
+function save_safety_state(state, require_invalid) {
+	if (!ensure_safety_file())
+		return false;
+
+	const encoded = encode_safety_state(state);
+
+	if (encoded === null)
+		return false;
+
+	let uci = null;
+	let committed = false;
+	let loaded = false;
+	let state_became_valid = false;
+	let written = false;
+
+	try {
+		uci = cursor();
+
+		if (uci) {
+			loaded = !!uci.load(SAFETY_CONFIG);
+
+			if (require_invalid && loaded && decode_safety_section(
+			    read_exact_safety_section(uci)) !== null)
+				state_became_valid = true;
+		}
+
+		if (uci && loaded && !state_became_valid) {
+			const sections = [];
+			let enumerable = true;
+
+			try {
+				uci.foreach(SAFETY_CONFIG, null, function(section) {
+					if (type(section?.['.name']) != 'string' ||
+					    !length(section['.name'])) {
+						enumerable = false;
+						return false;
+					}
+
+					push(sections, section['.name']);
+				});
+			}
+			catch (e) {
+				enumerable = false;
+			}
+
+			for (let section in sections) {
+				if (enumerable &&
+				    uci.delete(SAFETY_CONFIG, section) !== true)
+					enumerable = false;
+			}
+
+			if (enumerable) {
+				written =
+					uci.set(SAFETY_CONFIG, SAFETY_SECTION, 'safety') &&
+					uci.set(SAFETY_CONFIG, SAFETY_SECTION, 'schema',
+						SAFETY_SCHEMA) &&
+					uci.set(SAFETY_CONFIG, SAFETY_SECTION,
+						'profiles_refreshed',
+						encoded.state.profiles_refreshed ? '1' : '0') &&
+					uci.set(SAFETY_CONFIG, SAFETY_SECTION,
+						'notifications_refreshed',
+						encoded.state.notifications_refreshed ? '1' : '0') &&
+					uci.set(SAFETY_CONFIG, SAFETY_SECTION,
+						'notifications', encoded.notifications);
+
+				if (written && encoded.state.download_incident !== null)
+					written = uci.set(SAFETY_CONFIG, SAFETY_SECTION,
+						'download_incident',
+						encoded.state.download_incident);
+
+				if (written)
+					committed = !!uci.commit(SAFETY_CONFIG);
+			}
+		}
+	}
+	catch (e) {
+		written = false;
+	}
+
+	if (uci) {
+		try { uci.unload(SAFETY_CONFIG); }
+		catch (e) { /* Fresh readback below remains authoritative. */ }
+	}
+
+	if (state_became_valid)
+		return SAFETY_STATE_BECAME_VALID;
+
+	const persisted = committed ? load_safety_state() : null;
+
+	return committed && same_safety_state(persisted, encoded.state);
+}
+
+function clear_recovery_safety() {
+	recovery_safety_incident = null;
+	recovery_profiles_refreshed = false;
+	recovery_notifications_refreshed = false;
+	recovery_notification_guards = {};
+}
+
+function safety_snapshot(state) {
+	if (state === null) {
+		if (!valid_secret_token(recovery_safety_incident))
+			recovery_safety_incident = random_secret_token();
+
+		return {
+			verification_required: true,
+			incident_id: recovery_safety_incident,
+			profiles_refreshed: recovery_profiles_refreshed,
+			notifications_refreshed: recovery_notifications_refreshed,
+			state_invalid: true
+		};
+	}
+
+	clear_recovery_safety();
+
+	if (!state.download_incident)
+		return { verification_required: false };
+
+	return {
+		verification_required: true,
+		incident_id: state.download_incident,
+		profiles_refreshed: !!state.profiles_refreshed,
+		notifications_refreshed: !!state.notifications_refreshed
+	};
+}
+
+function current_safety_snapshot() {
+	return safety_snapshot(load_safety_state());
+}
+
+function capture_safety_context() {
+	const state = load_safety_state();
+
+	if (state === null) {
+		const snapshot = safety_snapshot(null);
+
+		return {
+			valid: false,
+			incident_id: snapshot.incident_id,
+			notifications: {}
+		};
+	}
+
+	const notifications = {};
+
+	for (let seq in state.notifications)
+		notifications[seq] = state.notifications[seq].incident;
+
+	return {
+		valid: true,
+		download_incident: state.download_incident,
+		notifications
+	};
+}
+
+function mark_download_verification(kind, request_safety) {
+	const state = load_safety_state();
+
+	if (state === null) {
+		const snapshot = safety_snapshot(null);
+
+		if (request_safety?.valid !== false ||
+		    !valid_secret_token(request_safety.incident_id) ||
+		    !constant_time_equal(snapshot.incident_id,
+			request_safety.incident_id))
+			return true;
+
+		if (kind == 'profiles')
+			recovery_profiles_refreshed = true;
+		else if (kind == 'notifications')
+			recovery_notifications_refreshed = true;
+
+		return true;
+	}
+
+	if (request_safety?.valid !== true ||
+	    !valid_secret_token(request_safety.download_incident) ||
+	    !constant_time_equal(state.download_incident,
+		request_safety.download_incident))
+		return true;
+
+	if (kind == 'profiles')
+		state.profiles_refreshed = true;
+	else if (kind == 'notifications')
+		state.notifications_refreshed = true;
+
+	return save_safety_state(state);
+}
+
+function begin_download_incident(job) {
+	const state = load_safety_state();
+
+	if (state === null || state.download_incident)
+		return false;
+
+	const generated = random_secret_token();
+	const incident = valid_secret_token(generated)
+		? generated : job?.decision_token;
+
+	if (!valid_secret_token(incident))
+		return false;
+
+	state.download_incident = incident;
+	state.profiles_refreshed = false;
+	state.notifications_refreshed = false;
+
+	if (!save_safety_state(state))
+		return false;
+
+	job.safety_incident = incident;
+	return true;
+}
+
+function clear_download_incident(job) {
+	if (!valid_secret_token(job?.safety_incident))
+		return true;
+
+	const state = load_safety_state();
+
+	if (state === null ||
+	    !constant_time_equal(state.download_incident, job.safety_incident))
+		return false;
+
+	state.download_incident = null;
+	state.profiles_refreshed = false;
+	state.notifications_refreshed = false;
+
+	return save_safety_state(state);
+}
+
+function notification_public_state(state) {
+	return state == 'provider_delivery_possible'
+		? 'provider_outcome_unknown' : state;
+}
+
+function begin_notification_incident(seq) {
+	const state = load_safety_state();
+
+	if (state === null)
+		return { error: 'safety_state_failed' };
+
+	if (state.notifications[seq])
+		return {
+			error: 'retry_blocked',
+			reason: notification_public_state(state.notifications[seq].state)
+		};
+
+	let count = 0;
+
+	for (let ignored in state.notifications)
+		count++;
+
+	if (count >= SAFETY_NOTIFICATION_MAX)
+		return { error: 'safety_state_failed' };
+
+	const incident = random_secret_token();
+
+	if (!valid_secret_token(incident))
+		return { error: 'safety_state_failed' };
+
+	state.notifications[seq] = {
+		incident,
+		state: 'provider_delivery_possible'
+	};
+
+	return save_safety_state(state)
+		? { incident }
+		: { error: 'safety_state_failed' };
+}
+
+function set_notification_incident(seq, incident, new_state) {
+	const state = load_safety_state();
+	const record = state?.notifications?.[seq];
+
+	if (!record || !constant_time_equal(record.incident, incident) ||
+	    !safety_notification_state(new_state))
+		return false;
+
+	record.state = new_state;
+	return save_safety_state(state);
+}
+
+function clear_notification_incident(seq, incident) {
+	const state = load_safety_state();
+	const record = state?.notifications?.[seq];
+
+	if (!record || !constant_time_equal(record.incident, incident))
+		return false;
+
+	delete state.notifications[seq];
+	return save_safety_state(state);
+}
+
+function clear_snapshot_notification_incidents(request_safety) {
+	const state = load_safety_state();
+
+	if (state === null || request_safety?.valid !== true ||
+	    type(request_safety.notifications) != 'object')
+		return false;
+
+	let changed = false;
+
+	for (let seq, incident in request_safety.notifications) {
+		const record = state.notifications[seq];
+
+		if (record && valid_secret_token(incident) &&
+		    constant_time_equal(record.incident, incident)) {
+			delete state.notifications[seq];
+			changed = true;
+		}
+	}
+
+	return !changed || save_safety_state(state);
+}
+
+function apply_notification_safety(notifications, request_safety) {
+	const state = load_safety_state();
+
+	if (state === null) {
+		const snapshot = safety_snapshot(null);
+
+		if (request_safety?.valid === false &&
+		    valid_secret_token(request_safety.incident_id) &&
+		    constant_time_equal(snapshot.incident_id,
+			request_safety.incident_id)) {
+			const recovered = normalize_safety_notifications(
+				recovery_notification_guards);
+			let count = 0;
+
+			if (recovered === null)
+				return SAFETY_UPDATE_FAILED;
+
+			for (let ignored in recovered)
+				count++;
+
+			for (let notification in notifications) {
+				const seq = canonical_uint32(`${notification.seqNumber}`);
+
+				if (seq === null)
+					return SAFETY_UPDATE_FAILED;
+
+				if (!recovered[seq]) {
+					if (++count > SAFETY_NOTIFICATION_MAX)
+						return SAFETY_UPDATE_FAILED;
+
+					recovered[seq] = {
+						incident: snapshot.incident_id,
+						state: 'provider_outcome_unknown'
+					};
+				}
+			}
+
+			recovery_notification_guards = recovered;
+			recovery_notifications_refreshed = true;
+		}
+
+		for (let notification in notifications) {
+			notification.safety_state = 'safety_state_failed';
+			notification.replay_blocked = true;
+		}
+
+		return notifications;
+	}
+
+	const present = {};
+	let changed = false;
+
+	for (let notification in notifications)
+		present[`${notification.seqNumber}`] = true;
+
+	for (let seq, incident in request_safety?.notifications || {}) {
+		const record = state.notifications[seq];
+
+		if (!present[seq] && record && valid_secret_token(incident) &&
+		    constant_time_equal(record.incident, incident)) {
+			delete state.notifications[seq];
+			changed = true;
+		}
+	}
+
+	if (request_safety?.valid === true &&
+	    valid_secret_token(request_safety.download_incident) &&
+	    constant_time_equal(state.download_incident,
+		request_safety.download_incident) &&
+	    !state.notifications_refreshed) {
+		state.notifications_refreshed = true;
+		changed = true;
+	}
+
+	if (changed && !save_safety_state(state)) {
+		return SAFETY_UPDATE_FAILED;
+	}
+
+	for (let notification in notifications) {
+		const record = state.notifications[`${notification.seqNumber}`];
+
+		if (record) {
+			notification.safety_state = notification_public_state(record.state);
+			notification.replay_blocked = true;
+		}
+	}
+
+	return notifications;
+}
+
+function cancel_discovery_expiry() {
+	discovery_generation++;
+	const instance = discovery_timer;
+
+	discovery_timer = null;
+
+	if (!instance)
+		return;
+
+	try {
+		instance.cancel();
+	}
+	catch (e) {
+		/* A fired timer may already have been detached from the event loop. */
+	}
+}
+
+function wipe_discovery_entries() {
+	discovery_entries = {};
+	discovery_entry_order = [];
+}
+
+function clear_discovery_entries() {
+	cancel_discovery_expiry();
+	wipe_discovery_entries();
+}
+
+function schedule_discovery_expiry() {
+	cancel_discovery_expiry();
+
+	const generation = discovery_generation;
+	let instance = null;
+	let armed = false;
+
+	try {
+		instance = timer(-1, function() {
+			if (generation != discovery_generation ||
+			    discovery_timer !== instance)
+				return;
+
+			discovery_timer = null;
+			discovery_generation++;
+			wipe_discovery_entries();
+		});
+
+		armed = instance !== null &&
+			instance.set(DISCOVERY_ENTRY_TTL_SECONDS * 1000) === true;
+	}
+	catch (e) {
+		armed = false;
+	}
+
+	if (!armed) {
+		if (instance) {
+			try {
+				instance.cancel();
+			}
+			catch (e) {
+				/* Storage fails closed below. */
+			}
+		}
+
+		discovery_generation++;
+		return false;
+	}
+
+	discovery_timer = instance;
+	return true;
+}
+
+function prune_discovery_entries() {
+	const now = time();
+	const retained = [];
+
+	for (let entry_id in discovery_entry_order) {
+		const entry = discovery_entries[entry_id];
+
+		if (entry && entry.expires_at > now)
+			push(retained, entry_id);
+		else
+			delete discovery_entries[entry_id];
+	}
+
+	discovery_entry_order = retained;
+
+	if (!length(retained))
+		cancel_discovery_expiry();
+}
+
+/* EventID and the discovery IMEI never cross the RPC boundary. */
+function claim_discovery_entry(entry_id, claim_id) {
+	if (!valid_secret_token(entry_id) || !valid_secret_token(claim_id))
+		return null;
+
+	prune_discovery_entries();
+
+	const entry = discovery_entries[entry_id];
+
+	if (!entry || entry.claim_id !== null)
+		return null;
+
+	entry.claim_id = claim_id;
+
+	return {
+		event_id: entry.event_id,
+		smdp: entry.smdp,
+		imei: entry.imei,
+		expires_at: entry.expires_at
+	};
+}
+
+function restore_discovery_entry(entry_id, claim_id) {
+	const entry = discovery_entries[entry_id];
+
+	if (!entry || entry.claim_id !== claim_id)
+		return false;
+
+	if (entry.expires_at <= time()) {
+		delete discovery_entries[entry_id];
+		prune_discovery_entries();
+		return false;
+	}
+
+	entry.claim_id = null;
+	return true;
+}
+
+function finalize_discovery_entry(entry_id, claim_id) {
+	const entry = discovery_entries[entry_id];
+
+	if (!entry || entry.claim_id !== claim_id)
+		return false;
+
+	delete discovery_entries[entry_id];
+	prune_discovery_entries();
+	return true;
+}
+
+function normalize_discovery(data, imei) {
+	if (type(data) != 'array' || length(data) > DISCOVERY_RESULT_MAX ||
+	    type(imei) != 'string' || (length(imei) && !valid_imei(imei)))
+		return INVALID;
+
+	const entries = {};
+	const entry_order = [];
+	const response = [];
+	const seen = {};
+	const expires_at = time() + DISCOVERY_ENTRY_TTL_SECONDS;
+
+	for (let record in data) {
+		if (type(record) != 'object')
+			return INVALID;
+
+		const event_id = safe_text(record.eventId,
+			DISCOVERY_EVENT_ID_MAX_LENGTH);
+		const smdp = safe_text(record.rspServerAddress, 255);
+
+		if (event_id === null || !length(event_id) || !valid_smdp(smdp))
+			return INVALID;
+
+		const dedupe_key = event_id + '\n' + smdp;
+
+		if (seen[dedupe_key])
+			continue;
+
+		seen[dedupe_key] = true;
+
+		let entry_id = null;
+
+		for (let attempt = 0; attempt < 8; attempt++) {
+			const candidate = random_secret_token();
+
+			if (candidate !== null && !entries[candidate]) {
+				entry_id = candidate;
+				break;
+			}
+		}
+
+		if (entry_id === null)
+			return DISCOVERY_ENTROPY_FAILED;
+
+		entries[entry_id] = {
+			event_id,
+			smdp,
+			imei,
+			expires_at,
+			claim_id: null
+		};
+		push(entry_order, entry_id);
+		push(response, { entry_id, smdp });
+	}
+
+	clear_discovery_entries();
+	discovery_entries = entries;
+	discovery_entry_order = entry_order;
+
+	if (length(entry_order) && !schedule_discovery_expiry()) {
+		wipe_discovery_entries();
+		return DISCOVERY_STORAGE_FAILED;
+	}
+
+	return response;
+}
+
+function normalize_profile_icon(icon_type, icon) {
+	if (type(icon_type) != 'string' || type(icon) != 'string')
+		return null;
+
+	icon_type = lc(icon_type);
+	if (icon_type == 'jpg')
+		icon_type = 'jpeg';
+
+	if (icon_type != 'png' && icon_type != 'jpeg')
+		return null;
+
+	/* SGP.22 limits profile icons to 1024 decoded bytes. */
+	if (length(icon) < 4 || length(icon) > 1368 || length(icon) % 4 != 0 ||
+	    match(icon, /^[A-Za-z0-9+\/]+={0,2}$/) === null)
+		return null;
+
+	let decoded_length = length(icon) / 4 * 3;
+	if (substr(icon, length(icon) - 2, 2) == '==')
+		decoded_length -= 2;
+	else if (substr(icon, length(icon) - 1, 1) == '=')
+		decoded_length--;
+
+	if (decoded_length > 1024)
+		return null;
+
+	/* Accept only the advertised raster type, never an active image format. */
+	if ((icon_type == 'png' && substr(icon, 0, 11) != 'iVBORw0KGgo') ||
+	    (icon_type == 'jpeg' && substr(icon, 0, 4) != '/9j/'))
+		return null;
+
+	return {
+		type: icon_type,
+		data: icon
+	};
+}
+
+function normalize_preview_metadata(data) {
+	if (type(data) != 'object')
+		return INVALID;
+
+	const metadata = {
+		iccid: valid_iccid(data.iccid) ? data.iccid : null,
+		serviceProviderName: safe_text(data.serviceProviderName, 128),
+		profileName: safe_text(data.profileName, 128),
+		profileClass: safe_text(data.profileClass, 32)
+	};
+	const profile_icon = normalize_profile_icon(data.iconType, data.icon);
+
+	if (profile_icon) {
+		metadata.iconType = profile_icon.type;
+		metadata.icon = profile_icon.data;
+	}
+
+	return metadata;
+}
+
+function normalize_profiles(data) {
+	const profiles = [];
+
+	if (type(data) != 'array')
+		return INVALID;
+
+	for (let profile in data) {
+		if (type(profile) != 'object')
+			continue;
+
+		const iccid = valid_iccid(profile.iccid) ? profile.iccid : null;
+		const aid = valid_aid(profile.isdpAid)
+			? uc(profile.isdpAid) : null;
+		const profile_icon = normalize_profile_icon(profile.iconType, profile.icon);
+
+		if (iccid === null && aid === null)
+			continue;
+
+		push(profiles, {
+			iccid,
+			isdpAid: aid,
+			profileState: safe_text(profile.profileState, 32),
+			profileNickname: safe_text(profile.profileNickname, 64),
+			serviceProviderName: safe_text(profile.serviceProviderName, 128),
+			profileName: safe_text(profile.profileName, 128),
+			profileClass: safe_text(profile.profileClass, 32),
+			iconType: profile_icon ? profile_icon.type : null,
+			icon: profile_icon ? profile_icon.data : null
+		});
+
+		if (length(profiles) >= 128)
+			break;
+	}
+
+	return profiles;
+}
+
+function profiles_payload_authoritative(data) {
+	if (type(data) != 'array' || length(data) > 128)
+		return false;
+
+	const seen_iccid = {};
+	const seen_aid = {};
+
+	for (let profile in data) {
+		if (type(profile) != 'object')
+			return false;
+
+		const iccid = valid_iccid(profile.iccid) ? profile.iccid : null;
+		const aid = valid_aid(profile.isdpAid) ? uc(profile.isdpAid) : null;
+
+		if (iccid === null && aid === null)
+			return false;
+
+		if ((iccid !== null && seen_iccid[iccid]) ||
+		    (aid !== null && seen_aid[aid]))
+			return false;
+
+		if (iccid !== null)
+			seen_iccid[iccid] = true;
+
+		if (aid !== null)
+			seen_aid[aid] = true;
+	}
+
+	return true;
+}
+
+function normalize_notifications(data) {
+	const notifications = [];
+
+	if (type(data) != 'array')
+		return INVALID;
+
+	for (let notification in data) {
+		if (type(notification) != 'object')
+			continue;
+
+		const seq = safe_uint(notification.seqNumber);
+
+		if (seq === null || seq > 4294967295)
+			continue;
+
+		push(notifications, {
+			seqNumber: seq,
+			profileManagementOperation:
+				safe_text(notification.profileManagementOperation, 32),
+			notificationAddress: safe_text(notification.notificationAddress, 255),
+			iccid: valid_iccid(notification.iccid) ? notification.iccid : null
+		});
+
+		if (length(notifications) >= 256)
+			break;
+	}
+
+	return notifications;
+}
+
+function notifications_payload_authoritative(data) {
+	if (type(data) != 'array' || length(data) > 256)
+		return false;
+
+	const seen = {};
+
+	for (let notification in data) {
+		if (type(notification) != 'object')
+			return false;
+
+		const seq = safe_uint(notification.seqNumber);
+
+		if (seq === null || seq > 4294967295 || seen[`${seq}`])
+			return false;
+
+		seen[`${seq}`] = true;
+	}
+
+	return true;
+}
+
+function normalize_driver_list(value, allowed) {
+	const drivers = [];
+
+	if (type(value) != 'array')
+		return drivers;
+
+	for (let driver in value) {
+		if (type(driver) == 'string' && index(allowed, driver) >= 0 &&
+		    index(drivers, driver) < 0)
+			push(drivers, driver);
+	}
+
+	return drivers;
+}
+
+function normalize_drivers(record) {
+	if (type(record?.payload) != 'object' ||
+	    type(record.payload.LPAC_APDU) != 'array' ||
+	    type(record.payload.LPAC_HTTP) != 'array')
+		return failure('invalid_response',
+			'lpac did not return a valid driver list.');
+
+	return success({
+		apdu: normalize_driver_list(record.payload.LPAC_APDU,
+			[ 'uqmi', 'mbim', 'at' ]),
+		http: normalize_driver_list(record.payload.LPAC_HTTP, [ 'curl' ])
+	});
+}
+
+function normalize_apdu_devices(record, backend) {
+	const payload = record?.payload;
+
+	if (backend != 'at' || type(payload) != 'object' ||
+	    payload.env != 'LPAC_APDU_AT_DEVICE' || type(payload.data) != 'array' ||
+	    length(payload.data) > 64)
+		return failure('invalid_response',
+			'lpac did not return a valid APDU device list.');
+
+	const devices = [];
+	const seen = {};
+
+	for (let item in payload.data) {
+		if (type(item) != 'object')
+			continue;
+
+		const name = safe_text(item.name, 255);
+		let value = null;
+
+		if (valid_device_path(item.env))
+			value = item.env;
+
+		if (value === null || name === null || !length(name) || seen[value])
+			continue;
+
+		seen[value] = true;
+		push(devices, { value, name });
+	}
+
+	/* OpenWrt often has no /dev/serial/by-id; supplement lpac's AT list. */
+	for (let pattern in [ '/dev/ttyUSB*', '/dev/ttyACM*', '/dev/wwan*at*' ]) {
+		if (length(devices) >= 64)
+			break;
+
+		let paths = [];
+
+		try {
+			paths = fs.glob(pattern);
+		}
+		catch (e) {
+			paths = [];
+		}
+
+		if (type(paths) != 'array')
+			continue;
+
+		for (let path in paths) {
+			if (length(devices) >= 64)
+				break;
+
+			if (type(path) != 'string' || seen[path] ||
+			    !valid_device_path(path) ||
+			    (match(path, /^\/dev\/ttyUSB[0-9]+$/) === null &&
+			     match(path, /^\/dev\/ttyACM[0-9]+$/) === null &&
+			     match(path, /^\/dev\/wwan[0-9]+at[0-9]+$/) === null))
+				continue;
+
+			seen[path] = true;
+			push(devices, { value: path, name: substr(path, 5) });
+		}
+	}
+
+	return success({ backend, devices });
+}
+
+function modem_driver_name(path) {
+	const device = substr(path, 5);
+	let target = null;
+
+	try {
+		target = fs.readlink(`/sys/class/usbmisc/${device}/device/driver`);
+	}
+	catch (e) {
+		target = null;
+	}
+
+	if (type(target) != 'string' || !length(target))
+		return null;
+
+	const parts = split(target, '/');
+	return length(parts) ? parts[length(parts) - 1] : null;
+}
+
+function list_modem_ports(backend) {
+	if (backend != 'uqmi' && backend != 'mbim')
+		return failure('invalid_argument',
+			'Only QMI and MBIM control ports can be detected this way.');
+
+	const devices = [];
+	const seen = {};
+	const direct_pattern = backend == 'uqmi'
+		? '/dev/wwan*qmi*'
+		: '/dev/wwan*mbim*';
+	const direct_match = backend == 'uqmi'
+		? /^\/dev\/wwan[0-9]+qmi[0-9]+$/
+		: /^\/dev\/wwan[0-9]+mbim[0-9]+$/;
+	let direct_paths = [];
+	let wdm_paths = [];
+
+	try {
+		direct_paths = fs.glob(direct_pattern);
+		wdm_paths = fs.glob('/dev/cdc-wdm*');
+	}
+	catch (e) {
+		direct_paths = [];
+		wdm_paths = [];
+	}
+
+	if (type(direct_paths) == 'array') {
+		for (let path in direct_paths) {
+			if (length(devices) >= 64)
+				break;
+
+			if (type(path) != 'string' || seen[path] ||
+			    !valid_device_path(path) || match(path, direct_match) === null)
+				continue;
+
+			seen[path] = true;
+			push(devices, {
+				value: path,
+				name: `${substr(path, 5)} (${backend == 'uqmi' ? 'QMI' : 'MBIM'})`
+			});
+		}
+	}
+
+	if (type(wdm_paths) == 'array') {
+		for (let path in wdm_paths) {
+			if (length(devices) >= 64)
+				break;
+
+			if (type(path) != 'string' || seen[path] ||
+			    match(path, /^\/dev\/cdc-wdm[0-9]+$/) === null)
+				continue;
+
+			const driver = modem_driver_name(path);
+			const expected = backend == 'uqmi' ? 'qmi_wwan' : 'cdc_mbim';
+
+			if (driver != expected)
+				continue;
+
+			seen[path] = true;
+			push(devices, {
+				value: path,
+				name: `${substr(path, 5)} (${driver})`
+			});
+		}
+	}
+
+	return success({ backend, devices });
+}
+
+function operation_error(kind) {
+	switch (kind) {
+	case 'info':
+		return 'Unable to read eUICC information.';
+	case 'profiles':
+		return 'Unable to read eSIM profiles.';
+	case 'notifications':
+		return 'Unable to read eUICC notifications.';
+	case 'discovery':
+		return 'Unable to discover available eSIM profiles.';
+	case 'set_default_smdp':
+		return 'Unable to set the default SM-DP+ address.';
+	case 'enable':
+		return 'Unable to enable the profile.';
+	case 'disable':
+		return 'Unable to disable the profile.';
+	case 'nickname':
+		return 'Unable to update the profile nickname.';
+	case 'delete':
+		return 'Unable to delete the profile.';
+	case 'download':
+		return 'Unable to download the profile.';
+	case 'remove_notification':
+		return 'Unable to remove the notification.';
+	case 'process_notification':
+		return 'Unable to process the notification.';
+	default:
+		return 'The lpac operation failed.';
+	}
+}
+
+function operation_reason(kind, data, stage) {
+	if (kind == 'process_notification') {
+		switch (stage) {
+		case 'es10b_retrieve_notifications_list':
+			return 'notification_retrieve_failed';
+		case 'es9p_handle_notification':
+			return 'provider_outcome_unknown';
+		case 'es10b_remove_notification_from_list':
+			return 'provider_accepted_remove_failed';
+		default:
+			return null;
+		}
+	}
+
+	if (type(data) != 'string')
+		return null;
+
+	switch (data) {
+	case 'iccid or aid not found':
+		return (kind == 'enable' || kind == 'disable')
+			? 'profile_not_found' : null;
+	case 'profile not in disabled state':
+		return kind == 'enable' ? 'profile_not_disabled' : null;
+	case 'profile not in enabled state':
+		return kind == 'disable' ? 'profile_not_enabled' : null;
+	case 'disallowed by policy':
+		return 'policy_denied';
+	case 'wrong profile reenabling':
+		return kind == 'enable' ? 'wrong_reenable' : null;
+	case 'internal error, maybe illegal iccid/aid coding':
+		return (kind == 'enable' || kind == 'disable')
+			? 'profile_internal_error' : null;
+	default:
+		return null;
+	}
+}
+
+function normalize_lpa(record, kind, context) {
+	const payload = record?.payload;
+
+	if (type(payload) != 'object' || type(payload.code) != 'int')
+		return failure('invalid_response',
+			'lpac did not return a valid result envelope.');
+
+	if (payload.code != 0) {
+		/* lpac's generic -1 is not a stable or useful user-facing code. */
+		const result = failure('lpac_error', operation_error(kind),
+			payload.code == -1 ? null : payload.code);
+		const reason = operation_reason(kind, payload.data, payload.message);
+
+		if (reason !== null)
+			result.reason = reason;
+
+		return result;
+	}
+
+	let data;
+
+	switch (kind) {
+	case 'version':
+		data = safe_text(payload.data, 128);
+		if (data === null)
+			data = INVALID;
+		break;
+	case 'info':
+		data = normalize_info(payload.data);
+		break;
+	case 'profiles':
+		data = profiles_payload_authoritative(payload.data)
+			? normalize_profiles(payload.data) : INVALID;
+		break;
+	case 'notifications':
+		data = notifications_payload_authoritative(payload.data)
+			? normalize_notifications(payload.data) : INVALID;
+		break;
+	case 'discovery':
+		data = normalize_discovery(payload.data, context?.imei);
+		break;
+	default:
+		/* Mutating lpac commands return null.  Never forward unexpected data. */
+		data = null;
+		break;
+	}
+
+	if (data === DISCOVERY_ENTROPY_FAILED || data === DISCOVERY_STORAGE_FAILED)
+		return failure('execution_failed',
+			'Unable to protect the discovered profile results.');
+
+	if (data === INVALID)
+		return failure('invalid_response',
+			'lpac returned data in an unexpected format.');
+
+	return success(data);
+}
+
+function parse_lpac_output(output, kind, context) {
+	let terminal = null;
+	let driver_record = null;
+	let completed = false;
+
+	if (type(output) != 'string')
+		return failure('invalid_response', 'lpac returned no usable output.');
+
+	if (length(output) > RPC_OUTPUT_MAX_BYTES)
+		return failure('output_too_large',
+			'The lpac output exceeded the safe response limit.');
+
+	if (length(output) && substr(output, length(output) - 1, 1) != '\n')
+		return failure('invalid_response',
+			'lpac returned a truncated JSON response.');
+
+	let line_count = 0;
+
+	for (let line in split(output, '\n')) {
+		if (++line_count > RPC_OUTPUT_MAX_LINES ||
+		    length(line) > RPC_OUTPUT_MAX_LINE_BYTES)
+			return failure('output_too_large',
+				'The lpac output exceeded the safe response limit.');
+
+		line = trim(line);
+
+		if (!length(line))
+			continue;
+
+		let record = null;
+
+		try {
+			record = json(line);
+		}
+		catch (e) {
+			return failure('invalid_response',
+				'lpac returned malformed JSON output.');
+		}
+
+		if (type(record) != 'object')
+			return failure('invalid_response',
+				'lpac returned an invalid JSON record.');
+
+		if (completed)
+			return failure('invalid_response',
+				'lpac returned records after its terminal result.');
+
+		if (record.type == 'lpa') {
+			if (terminal !== null || driver_record !== null)
+				return failure('invalid_response',
+					'lpac returned multiple terminal results.');
+
+			terminal = record;
+			completed = true;
+		}
+		else if (record.type == 'driver') {
+			if (driver_record !== null || terminal !== null)
+				return failure('invalid_response',
+					'lpac returned multiple terminal results.');
+
+			driver_record = record;
+			completed = true;
+		}
+		else if (record.type == 'progress') {
+			if (type(record.payload) != 'object' ||
+			    type(record.payload.code) != 'int' ||
+			    type(record.payload.message) != 'string' ||
+			    length(record.payload.message) > 128)
+				return failure('invalid_response',
+					'lpac returned an invalid progress record.');
+		}
+		else {
+			return failure('invalid_response',
+				'lpac returned an unknown JSON record.');
+		}
+	}
+
+	if (kind == 'drivers') {
+		if (terminal !== null)
+			return failure('invalid_response',
+				'lpac returned an unexpected terminal result.');
+
+		return driver_record !== null
+			? normalize_drivers(driver_record)
+			: failure('invalid_response',
+				'lpac did not return a driver list.');
+	}
+
+	if (kind == 'apdu_devices') {
+		if (terminal !== null)
+			return failure('invalid_response',
+				'lpac returned an unexpected terminal result.');
+
+		return driver_record !== null
+			? normalize_apdu_devices(driver_record, context?.backend)
+			: failure('invalid_response',
+				'lpac did not return an APDU device list.');
+	}
+
+	if (driver_record !== null)
+		return failure('invalid_response',
+			'lpac returned an unexpected driver result.');
+
+	return terminal !== null
+		? normalize_lpa(terminal, kind, context)
+		: failure('invalid_response',
+			'lpac did not return a terminal JSON result.');
+}
+
+function exec_failure(status, needs_lock) {
+	if (status == STATUS_NOT_FOUND)
+		return needs_lock
+			? failure('lock_failed', 'The flock executable is not installed.')
+			: failure('not_installed', 'The lpac executable is not installed.');
+
+	if (status == STATUS_TIMEOUT)
+		return failure('timeout', 'The lpac operation timed out.');
+
+	if (status == STATUS_NOT_SUPPORTED)
+		return failure('output_too_large',
+			'The lpac output exceeded the rpcd response limit.');
+
+	return failure('execution_failed',
+		'The lpac process could not be executed.');
+}
+
+function mark_notification_outcome_unknown(result, kind) {
+	if (kind != 'process_notification' || result?.success || result?.reason)
+		return result;
+
+	if (index([
+		'timeout', 'execution_failed', 'output_too_large',
+		'invalid_response', 'lpac_error'
+	], result.error) >= 0)
+		result.reason = 'provider_outcome_unknown';
+
+	return result;
+}
+
+function release_lock(handle) {
+	if (!handle)
+		return;
+
+	try {
+		handle.close();
+	}
+	catch (e) {
+		/* The kernel will release the lock when rpcd closes the descriptor. */
+	}
+}
+
+function valid_lock_file(stat, require_mode) {
+	return type(stat) == 'object' && stat.type == 'file' && stat.uid == 0 &&
+		stat.nlink == 1 && (!require_mode || stat.mode == 0o600);
+}
+
+function open_lock_file() {
+	let stat;
+	let handle;
+
+	try {
+		stat = fs.lstat(LOCK_PATH);
+
+		/* Never follow or reuse a non-regular or non-root-owned lock path. */
+		if (stat !== null && !valid_lock_file(stat, false))
+			return null;
+
+		/*
+		 * Keep the descriptor inheritable for asynchronous downloads. If a
+		 * wrapper or helper outlives its supervisor, the kernel lock must remain
+		 * held until the complete process tree exits.
+		 */
+		handle = fs.open(LOCK_PATH, 'a', 0o600);
+
+		if (!handle)
+			return null;
+
+		stat = fs.lstat(LOCK_PATH);
+
+		if (!valid_lock_file(stat, false) || fs.chmod(LOCK_PATH, 0o600) !== true ||
+		    !valid_lock_file(fs.lstat(LOCK_PATH), true)) {
+			release_lock(handle);
+			return null;
+		}
+
+		return handle;
+	}
+	catch (e) {
+		release_lock(handle);
+		return null;
+	}
+}
+
+function acquire_lock() {
+	const handle = open_lock_file();
+
+	if (!handle)
+		return {
+			result: failure('lock_failed',
+				'Unable to create the lpac operation lock.')
+		};
+
+	if (!handle.lock('xn')) {
+		release_lock(handle);
+
+		return {
+			result: failure('busy',
+				'Another lpac operation is already running.')
+		};
+	}
+
+	return { handle };
+}
+
+function next_async_job_id() {
+	async_job_id++;
+
+	if (async_job_id > 2147483647)
+		async_job_id = 1;
+
+	return async_job_id;
+}
+
+function remember_async_job(kind, job) {
+	const jobs = kind == 'discovery' ? discovery_jobs : notification_jobs;
+	const order = kind == 'discovery' ? discovery_job_order : notification_job_order;
+
+	jobs[job.id] = job;
+	push(order, job.id);
+
+	while (length(order) > ASYNC_JOB_HISTORY) {
+		const expired = shift(order);
+
+		delete jobs[expired];
+	}
+}
+
+function close_file(file) {
+	if (!file)
+		return;
+
+	try {
+		file.close();
+	}
+	catch (e) {
+		/* Closing is best-effort during process cleanup. */
+	}
+}
+
+function cancel_timer(instance) {
+	if (!instance)
+		return;
+
+	try {
+		instance.cancel();
+	}
+	catch (e) {
+		/* A fired timer may already be detached from the event loop. */
+	}
+}
+
+function close_pipe_set(pipes) {
+	if (type(pipes) != 'array')
+		return;
+
+	for (let file in pipes)
+		close_file(file);
+}
+
+function prepare_async_pipes() {
+	let output_pipe = null;
+	let liveness_pipe = null;
+	let output_reader = null;
+	let liveness_writer = null;
+
+	try {
+		output_pipe = fs.pipe();
+		liveness_pipe = fs.pipe();
+
+		if (type(output_pipe) != 'array' || length(output_pipe) != 2 ||
+		    type(liveness_pipe) != 'array' || length(liveness_pipe) != 2)
+			die('pipe failed');
+
+		const output_fd = output_pipe[0].fileno();
+		const liveness_fd = liveness_pipe[1].fileno();
+
+		if (type(output_fd) != 'int' || output_fd < 0 ||
+		    type(liveness_fd) != 'int' || liveness_fd < 0)
+			die('pipe fd failed');
+
+		output_reader = fs.open(`/proc/self/fd/${output_fd}`, 're');
+		liveness_writer = fs.open(`/proc/self/fd/${liveness_fd}`, 'we');
+
+		if (!output_reader || !liveness_writer)
+			die('pipe clone failed');
+
+		close_file(output_pipe[0]);
+		output_pipe[0] = null;
+		close_file(liveness_pipe[1]);
+		liveness_pipe[1] = null;
+
+		return {
+			child_output: output_pipe[1],
+			child_liveness: liveness_pipe[0],
+			output_reader,
+			liveness_writer
+		};
+	}
+	catch (e) {
+		close_file(output_reader);
+		close_file(liveness_writer);
+		close_pipe_set(output_pipe);
+		close_pipe_set(liveness_pipe);
+		return null;
+	}
+}
+
+let maybe_finish_async_runner;
+let drain_async_output;
+let authorized_async_status;
+
+function delete_async_output_watch(runner) {
+	if (!runner?.output_watch)
+		return;
+
+	try { runner.output_watch.delete(); }
+	catch (e) { /* A callback may already have detached it. */ }
+
+	runner.output_watch = null;
+}
+
+function close_async_liveness(runner) {
+	close_file(runner?.liveness_writer);
+
+	if (runner)
+		runner.liveness_writer = null;
+}
+
+function clear_async_runtime(runner) {
+	if (!runner)
+		return;
+
+	cancel_timer(runner.timeout_timer);
+	cancel_timer(runner.drain_timer);
+	cancel_timer(runner.kill_timer);
+	delete_async_output_watch(runner);
+	close_file(runner.output_reader);
+	close_async_liveness(runner);
+	runner.timeout_timer = null;
+	runner.drain_timer = null;
+	runner.kill_timer = null;
+	runner.output_reader = null;
+	runner.process = null;
+}
+
+function signal_process_group(pid) {
+	if (type(pid) != 'int' || pid < 2)
+		return false;
+
+	const group = `-${pid}`;
+	let delivered = false;
+
+	try { delivered = system([ KILL_PATH, '-KILL', '--', group ]) == 0; }
+	catch (e) { /* Try the BusyBox-compatible form below. */ }
+
+	if (!delivered) {
+		try { delivered = system([ KILL_PATH, '-KILL', group ]) == 0; }
+		catch (e) { /* The liveness guardian remains the primary cleanup path. */ }
+	}
+
+	return delivered;
+}
+
+function signal_async_process(runner) {
+	if (!runner || (runner.process_exited && runner.output_eof))
+		return false;
+
+	/* The nested lpac group must be targeted before its outer supervisor. */
+	if (!runner.inner_kill_sent && signal_process_group(runner.inner_pid))
+		runner.inner_kill_sent = true;
+
+	if (!runner.kill_sent && signal_process_group(runner.pid))
+		runner.kill_sent = true;
+
+	return runner.inner_kill_sent && runner.kill_sent;
+}
+
+function force_finish_async_runner(runner) {
+	if (!runner || runner.status != 'running')
+		return;
+
+	signal_async_process(runner);
+	runner.protocol_error = true;
+	runner.phase = 'error';
+	delete_async_output_watch(runner);
+	close_file(runner.output_reader);
+	close_async_liveness(runner);
+	runner.output_reader = null;
+	runner.output_buffer = '';
+	runner.cleanup_exhausted = true;
+	runner.exit_code = null;
+	maybe_finish_async_runner(runner);
+}
+
+function schedule_async_cleanup_tick(runner) {
+	try {
+		if (runner?.kill_timer &&
+		    runner.kill_timer.set(SUPERVISOR_KILL_RETRY_MS) === true)
+			return true;
+	}
+	catch (e) { /* Force a terminal state below. */ }
+
+	force_finish_async_runner(runner);
+	return false;
+}
+
+function retry_async_kill(runner) {
+	if (!runner || runner.status != 'running' || runner.cleanup_active)
+		return;
+
+	runner.cleanup_active = true;
+	runner.cleanup_ticks = 0;
+	close_async_liveness(runner);
+	runner.liveness_closed = true;
+	schedule_async_cleanup_tick(runner);
+}
+
+function advance_async_cleanup(runner) {
+	if (!runner || runner.status != 'running' || !runner.cleanup_active)
+		return;
+
+	runner.cleanup_ticks++;
+	signal_async_process(runner);
+
+	if (runner.cleanup_ticks >= SUPERVISOR_CLEANUP_RETRIES) {
+		force_finish_async_runner(runner);
+		return;
+	}
+
+	schedule_async_cleanup_tick(runner);
+}
+
+function consume_supervisor_identity(runner, line, on_error) {
+	if (!runner?.identity_pending)
+		return false;
+
+	runner.identity_pending = false;
+	const identity = match(line,
+		/^@luci-lpac-pgid:([1-9][0-9]{0,9})$/);
+	const pid = identity !== null ? int(identity[1]) : null;
+
+	if (type(pid) != 'int' || pid < 2 || `${pid}` != identity[1] ||
+	    type(runner.pid) != 'int' || pid == runner.pid) {
+		on_error(runner);
+		return true;
+	}
+
+	runner.inner_pid = pid;
+	return true;
+}
+
+function fail_async_protocol(runner, too_large) {
+	if (!runner || runner.status != 'running')
+		return;
+
+	runner.protocol_error = true;
+	runner.output_too_large = !!too_large || runner.output_too_large;
+	runner.phase = 'error';
+	retry_async_kill(runner);
+}
+
+function process_async_byte(runner, byte) {
+	runner.output_bytes++;
+
+	if (runner.output_bytes > runner.max_bytes) {
+		fail_async_protocol(runner, true);
+		return;
+	}
+
+	if (byte == '\n') {
+		runner.output_lines++;
+
+		if (runner.output_lines > runner.max_lines) {
+			fail_async_protocol(runner, true);
+			return;
+		}
+
+		if (runner.protocol_error)
+			return;
+
+		const line = runner.identity_pending
+			? runner.output_buffer : trim(runner.output_buffer);
+		runner.output_buffer = '';
+
+		if (runner.identity_pending || length(line)) {
+			try { runner.process_line(runner, line); }
+			catch (e) { fail_async_protocol(runner, false); }
+		}
+
+		return;
+	}
+
+	if (runner.protocol_error)
+		return;
+
+	runner.output_buffer += byte;
+
+	if (length(runner.output_buffer) > runner.max_line_bytes)
+		fail_async_protocol(runner, true);
+}
+
+function mark_async_output_eof(runner) {
+	if (runner.identity_pending || length(runner.output_buffer))
+		fail_async_protocol(runner, false);
+
+	runner.output_buffer = '';
+	runner.output_eof = true;
+	delete_async_output_watch(runner);
+	close_file(runner.output_reader);
+	runner.output_reader = null;
+	maybe_finish_async_runner(runner);
+
+	if (runner.status == 'running' && !runner.process_exited)
+		retry_async_kill(runner);
+}
+
+function register_async_output_watch(runner) {
+	try {
+		runner.output_watch = handle(runner.output_reader, function() {
+			drain_async_output(runner);
+		}, ULOOP_READ);
+	}
+	catch (e) {
+		runner.output_watch = null;
+	}
+
+	return runner.output_watch !== null;
+}
+
+function schedule_async_drain_retry(runner) {
+	fail_async_protocol(runner, false);
+
+	try {
+		if (runner.drain_timer)
+			runner.drain_timer.set(100);
+	}
+	catch (e) { /* Overall timeout and liveness closure remain active. */ }
+}
+
+function rearm_async_output(runner) {
+	let fd = null;
+	let replacement = null;
+
+	try {
+		fd = runner.output_reader.fileno();
+
+		if (type(fd) == 'int' && fd >= 0)
+			replacement = fs.open(`/proc/self/fd/${fd}`, 're');
+	}
+	catch (e) {
+		replacement = null;
+	}
+
+	if (!replacement) {
+		schedule_async_drain_retry(runner);
+		return false;
+	}
+
+	delete_async_output_watch(runner);
+	close_file(runner.output_reader);
+	runner.output_reader = replacement;
+
+	if (!register_async_output_watch(runner)) {
+		schedule_async_drain_retry(runner);
+		return false;
+	}
+
+	return true;
+}
+
+drain_async_output = function(runner) {
+	if (!runner || runner.status != 'running' || runner.output_eof ||
+	    !runner.output_reader)
+		return;
+
+	let drained = 0;
+
+	while (drained < SUPERVISOR_DRAIN_BYTES) {
+		let byte;
+
+		try { byte = runner.output_reader.read(1); }
+		catch (e) { fail_async_protocol(runner, false); return; }
+
+		if (byte === null) {
+			rearm_async_output(runner);
+			return;
+		}
+
+		if (type(byte) != 'string' || length(byte) > 1) {
+			fail_async_protocol(runner, false);
+			return;
+		}
+
+		if (!length(byte)) {
+			mark_async_output_eof(runner);
+			return;
+		}
+
+		process_async_byte(runner, byte);
+		drained++;
+	}
+
+	try {
+		if (!runner.drain_timer || runner.drain_timer.set(0) !== true)
+			fail_async_protocol(runner, false);
+	}
+	catch (e) { fail_async_protocol(runner, false); }
+};
+
+maybe_finish_async_runner = function(runner) {
+	if (!runner || runner.status != 'running' ||
+	    (!runner.cleanup_exhausted &&
+	     (!runner.process_exited || !runner.output_eof)))
+		return;
+
+	clear_async_runtime(runner);
+	runner.finish(runner);
+};
+
+function async_process_exited(runner, exit_code) {
+	if (!runner || runner.status != 'running')
+		return;
+
+	runner.process_exited = true;
+	runner.exit_code = type(exit_code) == 'int' ? exit_code : null;
+	drain_async_output(runner);
+	maybe_finish_async_runner(runner);
+
+	if (runner.status == 'running' && !runner.output_eof)
+		retry_async_kill(runner);
+}
+
+function start_async_runner(options) {
+	const lock_state = acquire_lock();
+
+	if (!lock_state.handle)
+		return { result: lock_state.result };
+
+	const lock_handle = lock_state.handle;
+	const pipes = prepare_async_pipes();
+
+	if (!pipes) {
+		release_lock(lock_handle);
+		return { result: failure('execution_failed',
+			'Unable to prepare secure lpac communication pipes.') };
+	}
+
+	let child_output_fd;
+	let child_liveness_fd;
+
+	try {
+		child_output_fd = pipes.child_output.fileno();
+		child_liveness_fd = pipes.child_liveness.fileno();
+	}
+	catch (e) {
+		child_output_fd = null;
+	}
+
+	if (type(child_output_fd) != 'int' || child_output_fd < 0 ||
+	    type(child_liveness_fd) != 'int' || child_liveness_fd < 0) {
+		close_file(pipes.child_output);
+		close_file(pipes.child_liveness);
+		close_file(pipes.output_reader);
+		close_file(pipes.liveness_writer);
+		release_lock(lock_handle);
+		return { result: failure('execution_failed',
+			'Unable to prepare secure lpac communication descriptors.') };
+	}
+
+	const runner = {
+		id: options.id,
+		kind: options.kind,
+		status: 'running',
+		phase: options.phase,
+		owner_token: options.owner_token,
+		pid: null,
+		inner_pid: null,
+		identity_pending: true,
+		inner_kill_sent: false,
+		kill_sent: false,
+		liveness_closed: false,
+		cleanup_active: false,
+		cleanup_ticks: 0,
+		cleanup_exhausted: false,
+		process_exited: false,
+		exit_code: null,
+		output_eof: false,
+		output_bytes: 0,
+		output_lines: 0,
+		output_buffer: '',
+		protocol_error: false,
+		output_too_large: false,
+		timed_out: false,
+		max_bytes: options.max_bytes + SUPERVISOR_IDENTITY_MAX_BYTES,
+		max_line_bytes: options.max_line_bytes,
+		max_lines: options.max_lines + 1,
+		process_line: options.process_line,
+		finish: options.finish,
+		output_reader: pipes.output_reader,
+		liveness_writer: pipes.liveness_writer,
+		output_watch: null,
+		timeout_timer: null,
+		drain_timer: null,
+		kill_timer: null,
+		process: null
+	};
+
+	for (let key in options.context || {})
+		runner[key] = options.context[key];
+
+	if (options.prepare) {
+		let prepared;
+
+		try { prepared = options.prepare(runner); }
+		catch (e) { prepared = failure('safety_state_failed',
+			'Unable to prepare the persistent lpac safety state.'); }
+
+		if (prepared !== null) {
+			close_file(pipes.child_output);
+			close_file(pipes.child_liveness);
+			close_file(pipes.output_reader);
+			close_file(pipes.liveness_writer);
+			release_lock(lock_handle);
+			return { result: prepared };
+		}
+	}
+
+	const argv = [
+		SUPERVISOR_PATH, 'async',
+		`${child_output_fd}`, `${child_liveness_fd}`, LPAC_PATH
+	];
+
+	for (let param in options.params)
+		push(argv, param);
+
+	try {
+		runner.timeout_timer = timer(-1, function() {
+			if (runner.status != 'running')
+				return;
+
+			runner.timed_out = true;
+			runner.phase = 'error';
+			retry_async_kill(runner);
+		});
+		runner.drain_timer = timer(-1, function() {
+			drain_async_output(runner);
+		});
+		runner.kill_timer = timer(-1, function() {
+			if (runner.status == 'running')
+				advance_async_cleanup(runner);
+		});
+
+		if (!runner.timeout_timer || !runner.drain_timer || !runner.kill_timer ||
+		    !register_async_output_watch(runner))
+			die('runtime setup failed');
+
+		runner.process = process(SETSID_PATH, argv, DOWNLOAD_ENV,
+			function(exit_code) { async_process_exited(runner, exit_code); });
+	}
+	catch (e) {
+		runner.process = null;
+	}
+
+	close_file(pipes.child_output);
+	close_file(pipes.child_liveness);
+	release_lock(lock_handle);
+
+	if (!runner.process) {
+		clear_async_runtime(runner);
+		let rolled_back = true;
+
+		if (options.abort) {
+			try { rolled_back = options.abort(runner) === true; }
+			catch (e) { rolled_back = false; }
+		}
+
+		if (!rolled_back) {
+			const result = failure('safety_state_failed',
+				'The lpac process did not start and its safety state could not be rolled back.');
+			result.reason = 'provider_outcome_unknown';
+			return { result };
+		}
+
+		return { result: failure('execution_failed',
+			'Unable to start the lpac process.') };
+	}
+
+	try { runner.pid = runner.process.pid(); }
+	catch (e) { runner.pid = null; }
+
+	try {
+		if (runner.timeout_timer.set(options.timeout_ms) !== true)
+			fail_async_protocol(runner, false);
+	}
+	catch (e) { fail_async_protocol(runner, false); }
+
+	if (type(runner.pid) != 'int' || runner.pid < 2)
+		fail_async_protocol(runner, false);
+
+	if (runner.status != 'running')
+		return { result: authorized_async_status(runner) };
+
+	return { runner };
+}
+
+function set_async_job_error(job, error, message, reason, code) {
+	job.status = 'error';
+	job.phase = 'error';
+	job.error = error;
+	job.message = message;
+
+	if (reason)
+		job.reason = reason;
+
+	if (type(code) == 'int' && code >= 0)
+		job.code = code;
+}
+
+function copy_async_failure(job, result, default_reason) {
+	set_async_job_error(job,
+		result?.error || 'execution_failed',
+		result?.message || 'The lpac process ended unexpectedly.',
+		result?.reason || default_reason,
+		result?.code);
+}
+
+const DISCOVERY_STAGES = [
+	'es10b_get_euicc_challenge_and_info',
+	'es9p_initiate_authentication',
+	'es10b_authenticate_server',
+	'es11_authenticate_client'
+];
+
+function process_discovery_job_line(job, line) {
+	if (consume_supervisor_identity(job, line, function(runner) {
+		fail_async_protocol(runner, false);
+	}))
+		return;
+
+	let record;
+
+	try { record = json(line); }
+	catch (e) { fail_async_protocol(job, false); return; }
+
+	if (type(record) != 'object' || job.terminal !== null) {
+		fail_async_protocol(job, false);
+		return;
+	}
+
+	const payload = record.payload;
+
+	if (type(payload) != 'object' || type(payload.code) != 'int' ||
+	    type(payload.message) != 'string' || length(payload.message) > 128) {
+		fail_async_protocol(job, false);
+		return;
+	}
+
+	if (record.type == 'progress') {
+		if (payload.code != 0 || job.stage_index >= length(DISCOVERY_STAGES) ||
+		    payload.message != DISCOVERY_STAGES[job.stage_index]) {
+			fail_async_protocol(job, false);
+			return;
+		}
+
+		job.stage_index++;
+		return;
+	}
+
+	if (record.type != 'lpa') {
+		fail_async_protocol(job, false);
+		return;
+	}
+
+	job.terminal = record;
+}
+
+function finish_discovery_job(job) {
+	if (job.timed_out) {
+		set_async_job_error(job, 'timeout',
+			'The SM-DS discovery operation timed out.');
+	}
+	else if (job.output_too_large) {
+		set_async_job_error(job, 'output_too_large',
+			'The lpac discovery output exceeded the safe limit.');
+	}
+	else if (job.protocol_error || job.terminal === null) {
+		set_async_job_error(job, 'invalid_response',
+			'lpac returned an invalid discovery response.');
+	}
+	else if (job.terminal?.payload?.code == 0 &&
+	         (job.stage_index != length(DISCOVERY_STAGES) ||
+	          job.exit_code != CHILD_EXIT_SUCCESS)) {
+		/* Never retain EventIDs until the complete success contract is proven. */
+		copy_async_failure(job, failure('execution_failed',
+			'The lpac discovery process exited unexpectedly.'));
+	}
+	else {
+		const normalized = normalize_lpa(job.terminal, 'discovery', { imei: job.imei });
+
+		if (normalized.success) {
+			job.status = 'success';
+			job.phase = 'complete';
+			job.results = normalized.data;
+		}
+		else if (job.exit_code == CHILD_EXIT_NOT_FOUND)
+			copy_async_failure(job, failure('not_installed',
+				'The lpac executable is not installed.'));
+		else
+			copy_async_failure(job, normalized);
+	}
+
+	delete job.terminal;
+	delete job.imei;
+	delete job.output_buffer;
+}
+
+function async_preflight() {
+	if (read_config() === null)
+		return failure('invalid_config',
+			'The installed lpac configuration is missing or invalid.');
+
+	if (fs.access(LPAC_PATH, 'x') !== true ||
+	    fs.access(SETSID_PATH, 'x') !== true ||
+	    fs.access(SUPERVISOR_PATH, 'x') !== true ||
+	    fs.access(KILL_PATH, 'x') !== true ||
+	    fs.access(SHELL_PATH, 'x') !== true)
+		return failure('not_installed',
+			'The lpac executable or its process supervisor is unavailable.');
+
+	return null;
+}
+
+function start_discovery_job(params, imei) {
+	const preflight = async_preflight();
+
+	if (preflight !== null)
+		return preflight;
+
+	if (discovery_job?.status == 'running')
+		return failure('busy', 'Another SM-DS discovery job is already running.');
+
+	const owner_token = random_secret_token();
+
+	if (!valid_secret_token(owner_token))
+		return failure('execution_failed',
+			'Unable to create a secure discovery owner token.');
+
+	const id = next_async_job_id();
+	const started = start_async_runner({
+		id,
+		kind: 'discovery',
+		phase: 'contacting_smds',
+		owner_token,
+		params,
+		timeout_ms: DISCOVERY_TIMEOUT_MS,
+		max_bytes: DISCOVERY_OUTPUT_MAX_BYTES,
+		max_line_bytes: DISCOVERY_OUTPUT_MAX_LINE_BYTES,
+		max_lines: DISCOVERY_OUTPUT_MAX_LINES,
+		process_line: process_discovery_job_line,
+		finish: finish_discovery_job,
+		context: { imei, stage_index: 0, terminal: null }
+	});
+
+	if (!started.runner)
+		return started.result;
+
+	discovery_job = started.runner;
+	remember_async_job('discovery', discovery_job);
+	clear_discovery_entries();
+
+	return success({
+		job_id: id,
+		status: 'running',
+		phase: discovery_job.phase,
+		owner_token
+	});
+}
+
+const NOTIFICATION_STAGES = [
+	'es10b_retrieve_notifications_list',
+	'es9p_handle_notification',
+	'es10b_remove_notification_from_list'
+];
+
+function process_notification_job_line(job, line) {
+	if (consume_supervisor_identity(job, line, function(runner) {
+		fail_async_protocol(runner, false);
+	}))
+		return;
+
+	let record;
+
+	try { record = json(line); }
+	catch (e) { fail_async_protocol(job, false); return; }
+
+	if (type(record) != 'object' || job.terminal !== null) {
+		fail_async_protocol(job, false);
+		return;
+	}
+
+	const payload = record.payload;
+
+	if (type(payload) != 'object' || type(payload.code) != 'int' ||
+	    type(payload.message) != 'string' || length(payload.message) > 128) {
+		fail_async_protocol(job, false);
+		return;
+	}
+
+	if (record.type == 'progress') {
+		const maximum = job.remove_after_success ? 3 : 2;
+
+		if (payload.code != 0 || job.stage_index >= maximum ||
+		    payload.message != NOTIFICATION_STAGES[job.stage_index] ||
+		    payload.data !== job.seq) {
+			fail_async_protocol(job, false);
+			return;
+		}
+
+		job.stage_index++;
+		job.phase = job.stage_index == 1 ? 'retrieving' :
+			(job.stage_index == 2 ? 'contacting_provider' : 'removing');
+		return;
+	}
+
+	if (record.type != 'lpa') {
+		fail_async_protocol(job, false);
+		return;
+	}
+
+	job.terminal = record;
+}
+
+function finish_notification_job(job) {
+	let normalized = null;
+	let public_state = 'provider_outcome_unknown';
+	let replay_blocked = true;
+	let safety_persisted = false;
+
+	if (job.timed_out) {
+		set_async_job_error(job, 'timeout',
+			'The notification provider operation timed out.',
+			'provider_outcome_unknown');
+	}
+	else if (job.output_too_large) {
+		set_async_job_error(job, 'output_too_large',
+			'The lpac notification output exceeded the safe limit.',
+			'provider_outcome_unknown');
+	}
+	else if (job.stage_index == 0 && index([
+		CHILD_EXIT_NOT_FOUND,
+		CHILD_EXIT_NOT_EXECUTABLE,
+		CHILD_EXIT_PIPE_FAILED
+	], job.exit_code) >= 0) {
+		if (clear_notification_incident(job.seq, job.safety_incident)) {
+			set_async_job_error(job,
+				job.exit_code == CHILD_EXIT_NOT_FOUND ? 'not_installed' : 'execution_failed',
+				job.exit_code == CHILD_EXIT_NOT_FOUND
+					? 'The lpac executable is not installed.'
+					: 'The lpac notification supervisor could not start safely.');
+			public_state = 'clear';
+			replay_blocked = false;
+		}
+		else
+			set_async_job_error(job, 'safety_state_failed',
+				'The notification did not start but its replay guard could not be cleared.',
+				'provider_outcome_unknown');
+	}
+	else if (job.protocol_error || job.terminal === null) {
+		set_async_job_error(job, 'invalid_response',
+			'lpac returned an invalid notification response.',
+			'provider_outcome_unknown');
+	}
+	else {
+		normalized = normalize_lpa(job.terminal, 'process_notification');
+
+		if (normalized.success) {
+			const expected_stages = job.remove_after_success ? 3 : 2;
+
+			if (job.stage_index != expected_stages ||
+			    job.exit_code != CHILD_EXIT_SUCCESS) {
+				set_async_job_error(job, 'execution_failed',
+					'The lpac notification process exited unexpectedly.',
+					'provider_outcome_unknown');
+			}
+			else if (job.remove_after_success) {
+				if (clear_notification_incident(job.seq, job.safety_incident)) {
+					job.status = 'success';
+					job.phase = 'complete';
+					public_state = 'clear';
+					replay_blocked = false;
+				}
+				else
+					set_async_job_error(job, 'safety_state_failed',
+						'The notification completed but its safety state could not be cleared.',
+						'provider_outcome_unknown');
+			}
+			else if (set_notification_incident(job.seq, job.safety_incident,
+			         'provider_accepted_local_record_retained')) {
+				safety_persisted = true;
+				job.status = 'success';
+				job.phase = 'complete';
+				public_state = 'provider_accepted_local_record_retained';
+			}
+			else
+				set_async_job_error(job, 'safety_state_failed',
+					'The provider accepted the notification but its replay guard could not be updated.',
+					'provider_outcome_unknown');
+		}
+		else if (normalized.reason == 'notification_retrieve_failed' &&
+		         job.stage_index == 1) {
+			if (clear_notification_incident(job.seq, job.safety_incident))
+				copy_async_failure(job, normalized);
+			else
+				set_async_job_error(job, 'safety_state_failed',
+					'The notification was not delivered but its replay guard could not be cleared.',
+					'provider_outcome_unknown');
+
+			replay_blocked = job.error == 'safety_state_failed';
+			public_state = replay_blocked ? 'provider_outcome_unknown' : 'clear';
+		}
+		else if (normalized.reason == 'provider_accepted_remove_failed' &&
+		         job.stage_index == 3) {
+			if (set_notification_incident(job.seq, job.safety_incident,
+			    'provider_accepted_remove_failed')) {
+				safety_persisted = true;
+				copy_async_failure(job, normalized,
+					'provider_accepted_remove_failed');
+				public_state = 'provider_accepted_remove_failed';
+			}
+			else
+				set_async_job_error(job, 'safety_state_failed',
+					'The provider accepted the notification but its removal state could not be recorded.',
+					'provider_outcome_unknown');
+		}
+		else {
+			if (set_notification_incident(job.seq, job.safety_incident,
+			    'provider_outcome_unknown')) {
+				safety_persisted = true;
+				copy_async_failure(job, normalized,
+					'provider_outcome_unknown');
+			}
+			else
+				set_async_job_error(job, 'safety_state_failed',
+					'The notification outcome is uncertain and its replay guard could not be updated.',
+					'provider_outcome_unknown');
+		}
+	}
+
+	if (job.status == 'error' && public_state == 'provider_outcome_unknown' &&
+	    !safety_persisted &&
+	    !set_notification_incident(job.seq, job.safety_incident,
+		'provider_outcome_unknown'))
+		set_async_job_error(job, 'safety_state_failed',
+			'The notification outcome is uncertain and its replay guard could not be persisted.',
+			'provider_outcome_unknown');
+
+	job.safety_state = public_state;
+	job.replay_blocked = replay_blocked;
+	delete job.terminal;
+	delete job.output_buffer;
+	delete job.safety_incident;
+}
+
+function start_notification_job(params, seq, remove_after_success) {
+	const preflight = async_preflight();
+
+	if (preflight !== null)
+		return preflight;
+
+	if (notification_job?.status == 'running')
+		return failure('busy',
+			'Another notification provider job is already running.');
+
+	const owner_token = random_secret_token();
+
+	if (!valid_secret_token(owner_token))
+		return failure('execution_failed',
+			'Unable to create a secure notification owner token.');
+
+	const id = next_async_job_id();
+	const started = start_async_runner({
+		id,
+		kind: 'notification',
+		phase: 'retrieving',
+		owner_token,
+		params,
+		timeout_ms: NOTIFICATION_TIMEOUT_MS,
+		max_bytes: NOTIFICATION_OUTPUT_MAX_BYTES,
+		max_line_bytes: NOTIFICATION_OUTPUT_MAX_LINE_BYTES,
+		max_lines: NOTIFICATION_OUTPUT_MAX_LINES,
+		process_line: process_notification_job_line,
+		finish: finish_notification_job,
+		context: {
+			seq,
+			remove_after_success,
+			stage_index: 0,
+			terminal: null,
+			safety_incident: null
+		},
+		prepare: function(runner) {
+			const prepared = begin_notification_incident(seq);
+
+			if (prepared.error) {
+				const result = failure(prepared.error,
+					prepared.error == 'retry_blocked'
+						? 'This notification is blocked from automatic replay.'
+						: 'Unable to prepare the persistent notification safety state.');
+
+				if (prepared.reason)
+					result.reason = prepared.reason;
+
+				return result;
+			}
+
+			runner.safety_incident = prepared.incident;
+			return null;
+		},
+		abort: function(runner) {
+			return clear_notification_incident(seq, runner.safety_incident);
+		}
+	});
+
+	if (!started.runner)
+		return started.result;
+
+	notification_job = started.runner;
+	remember_async_job('notification', notification_job);
+
+	return success({
+		job_id: id,
+		status: 'running',
+		phase: notification_job.phase,
+		owner_token
+	});
+}
+
+authorized_async_status = function(job) {
+	if (job.status == 'error') {
+		const result = failure(job.error, job.message, job.code);
+
+		if (job.reason)
+			result.reason = job.reason;
+
+		return result;
+	}
+
+	const data = {
+		job_id: job.id,
+		status: job.status,
+		phase: job.phase
+	};
+
+	if (job.kind == 'discovery' && job.status == 'success')
+		data.results = job.results;
+	else if (job.kind == 'notification' && job.status != 'running') {
+		data.safety_state = job.safety_state;
+		data.replay_blocked = !!job.replay_blocked;
+	}
+
+	return success(data);
+};
+
+function async_job_status(kind, id, owner_token) {
+	const current = kind == 'discovery' ? discovery_job : notification_job;
+	const jobs = kind == 'discovery' ? discovery_jobs : notification_jobs;
+
+	if (id == 0) {
+		if (current?.status == 'running')
+			return success({
+				job_id: current.id,
+				status: 'running',
+				phase: current.phase
+			});
+
+		return success({ status: 'idle', phase: 'idle' });
+	}
+
+	const job = jobs[id];
+
+	if (!job)
+		return failure('job_not_found', 'The lpac job was not found.');
+
+	if (!valid_secret_token(owner_token) ||
+	    !constant_time_equal(job.owner_token, owner_token))
+		return failure('not_authorized', 'The lpac job owner token is invalid.');
+
+	return authorized_async_status(job);
+}
+
+function next_download_job_id() {
+	download_job_id++;
+
+	if (download_job_id > 2147483647)
+		download_job_id = 1;
+
+	return download_job_id;
+}
+
+function remember_download_job(job) {
+	download_jobs[job.id] = job;
+	push(download_job_order, job.id);
+
+	while (length(download_job_order) > DOWNLOAD_JOB_HISTORY) {
+		const expired = shift(download_job_order);
+
+		delete download_jobs[expired];
+	}
+}
+
+let maybe_finish_download_job;
+let drain_download_output;
+let authorized_download_status;
+
+function delete_output_watch() {
+	if (!download_output_watch)
+		return;
+
+	try {
+		download_output_watch.delete();
+	}
+	catch (e) {
+		/* A callback may already have detached the watch. */
+	}
+
+	download_output_watch = null;
+}
+
+function close_download_input() {
+	close_file(download_input_writer);
+	download_input_writer = null;
+}
+
+function clear_download_runtime(id) {
+	if (download_job?.id != id)
+		return;
+
+	cancel_timer(download_timer);
+	cancel_timer(download_preview_timer);
+	cancel_timer(download_drain_timer);
+	cancel_timer(download_kill_timer);
+	delete_output_watch();
+	close_download_input();
+	close_file(download_output_reader);
+	close_file(download_liveness_writer);
+	download_process = null;
+	download_timer = null;
+	download_preview_timer = null;
+	download_drain_timer = null;
+	download_kill_timer = null;
+	download_output_reader = null;
+	download_liveness_writer = null;
+}
+
+function signal_download_process(job) {
+	if (!job || (job.process_exited && job.output_eof))
+		return false;
+
+	if (!job.inner_kill_sent && signal_process_group(job.inner_pid))
+		job.inner_kill_sent = true;
+
+	if (!job.kill_sent && signal_process_group(job.pid))
+		job.kill_sent = true;
+
+	return job.inner_kill_sent && job.kill_sent;
+}
+
+function force_finish_download_job(job) {
+	if (!job || job.status != 'running')
+		return;
+
+	signal_download_process(job);
+	job.protocol_error = true;
+	job.phase = 'error';
+	delete_output_watch();
+	close_download_input();
+	close_file(download_output_reader);
+	close_file(download_liveness_writer);
+	download_output_reader = null;
+	download_liveness_writer = null;
+	job.output_buffer = '';
+	job.cleanup_exhausted = true;
+	job.exit_code = null;
+	maybe_finish_download_job(job.id);
+}
+
+function schedule_download_cleanup_tick(job) {
+	try {
+		if (download_kill_timer &&
+		    download_kill_timer.set(SUPERVISOR_KILL_RETRY_MS) === true)
+			return true;
+	}
+	catch (e) { /* Force a terminal state below. */ }
+
+	force_finish_download_job(job);
+	return false;
+}
+
+function retry_download_kill(job) {
+	if (!job || job.status != 'running' || job.cleanup_active)
+		return;
+
+	job.cleanup_active = true;
+	job.cleanup_ticks = 0;
+	close_file(download_liveness_writer);
+	download_liveness_writer = null;
+	job.liveness_closed = true;
+	schedule_download_cleanup_tick(job);
+}
+
+function advance_download_cleanup(job) {
+	if (!job || job.status != 'running' || !job.cleanup_active)
+		return;
+
+	job.cleanup_ticks++;
+	signal_download_process(job);
+
+	if (job.cleanup_ticks >= SUPERVISOR_CLEANUP_RETRIES) {
+		force_finish_download_job(job);
+		return;
+	}
+
+	schedule_download_cleanup_tick(job);
+}
+
+function write_download_decision(job, accept) {
+	if (!job || !download_input_writer)
+		return false;
+
+	if (accept)
+		job.accept_attempted = true;
+
+	let written = null;
+
+	try {
+		written = download_input_writer.write(accept ? 'y\n' : 'n\n');
+
+		/* OpenWrt 24 returns null even when fflush() succeeds. */
+		try {
+			download_input_writer.flush();
+		}
+		catch (e) {
+			/* close() below performs the final best-effort flush. */
+		}
+	}
+	catch (e) {
+		written = null;
+	}
+
+	close_download_input();
+	return written == 2;
+}
+
+function fail_download_protocol(job) {
+	if (!job || job.status != 'running')
+		return;
+
+	job.protocol_error = true;
+	job.phase = 'error';
+	close_download_input();
+	retry_download_kill(job);
+}
+
+function process_download_record(job, line) {
+	if (consume_supervisor_identity(job, line, fail_download_protocol))
+		return;
+
+	let record;
+
+	try {
+		record = json(line);
+	}
+	catch (e) {
+		fail_download_protocol(job);
+		return;
+	}
+
+	if (type(record) != 'object') {
+		fail_download_protocol(job);
+		return;
+	}
+
+	/* Unknown bounded record types are ignored; they can never unlock preview. */
+	if (record.type != 'progress' && record.type != 'lpa')
+		return;
+
+	if (job.terminal !== null) {
+		fail_download_protocol(job);
+		return;
+	}
+
+	const payload = record.payload;
+
+	if (type(payload) != 'object' || type(payload.code) != 'int' ||
+	    type(payload.message) != 'string' || length(payload.message) > 128) {
+		fail_download_protocol(job);
+		return;
+	}
+
+	if (record.type == 'progress') {
+		if (payload.code != 0) {
+			fail_download_protocol(job);
+			return;
+		}
+
+		if (payload.message == 'es8p_meatadata_parse' ||
+		    payload.message == 'es8p_metadata_parse') {
+			if (job.metadata_seen || job.preview_seen) {
+				fail_download_protocol(job);
+				return;
+			}
+
+			const metadata = normalize_preview_metadata(payload.data);
+
+			if (metadata === INVALID) {
+				fail_download_protocol(job);
+				return;
+			}
+
+			job.metadata_seen = true;
+			job.preview_metadata = metadata;
+			return;
+		}
+
+		if (payload.message == 'preview') {
+			if (job.preview_seen || job.terminal !== null ||
+			    payload.data != 'y/n') {
+				fail_download_protocol(job);
+				return;
+			}
+
+			job.preview_seen = true;
+			job.phase = 'awaiting_confirmation';
+
+			try {
+				if (!download_preview_timer ||
+				    download_preview_timer.set(DOWNLOAD_PREVIEW_TIMEOUT_MS) !== true ||
+				    !download_timer ||
+				    download_timer.set(DOWNLOAD_PREVIEW_TIMEOUT_MS +
+					DOWNLOAD_CANCEL_GRACE_MS) !== true)
+					fail_download_protocol(job);
+			}
+			catch (e) {
+				fail_download_protocol(job);
+			}
+
+			return;
+		}
+
+		if ((payload.message == 'es10b_prepare_download' ||
+		     payload.message == 'es9p_get_bound_profile_package' ||
+		     payload.message == 'es10b_load_bound_profile_package') &&
+		    !job.accept_attempted) {
+			if (!job.safety_incident && !begin_download_incident(job))
+				job.safety_persistence_failed = true;
+
+			job.gate_bypassed = true;
+			fail_download_protocol(job);
+		}
+
+		return;
+	}
+
+	if (payload.code == 0 && payload.message == 'success') {
+		job.terminal = 'success';
+
+		if (!job.accept_attempted) {
+			if (!job.safety_incident && !begin_download_incident(job))
+				job.safety_persistence_failed = true;
+
+			job.gate_bypassed = true;
+			fail_download_protocol(job);
+		}
+	}
+	else if (payload.message == 'cancelled')
+		job.terminal = 'cancelled';
+	else
+		job.terminal = 'error';
+}
+
+function process_download_byte(job, byte) {
+	job.output_bytes++;
+
+	if (job.output_bytes > DOWNLOAD_OUTPUT_MAX_BYTES +
+	    SUPERVISOR_IDENTITY_MAX_BYTES) {
+		fail_download_protocol(job);
+		return;
+	}
+
+	if (job.protocol_error)
+		return;
+
+	if (byte == '\n') {
+		job.output_lines++;
+
+		if (job.output_lines > DOWNLOAD_OUTPUT_MAX_LINES + 1) {
+			fail_download_protocol(job);
+			return;
+		}
+
+		const line = job.identity_pending
+			? job.output_buffer : trim(job.output_buffer);
+		job.output_buffer = '';
+
+		if (job.identity_pending || length(line))
+			process_download_record(job, line);
+
+		return;
+	}
+
+	job.output_buffer += byte;
+
+	if (length(job.output_buffer) > DOWNLOAD_OUTPUT_MAX_LINE_BYTES)
+		fail_download_protocol(job);
+}
+
+function mark_download_output_eof(job) {
+	if (job.identity_pending || length(job.output_buffer)) {
+		/* lpac emits NDJSON; a non-newline tail is truncated and untrusted. */
+		fail_download_protocol(job);
+	}
+
+	job.output_buffer = '';
+	job.output_eof = true;
+	delete_output_watch();
+	close_file(download_output_reader);
+	download_output_reader = null;
+	maybe_finish_download_job(job.id);
+
+	if (job.status == 'running' && !job.process_exited)
+		retry_download_kill(job);
+}
+
+function register_download_output_watch(id) {
+	try {
+		download_output_watch = handle(download_output_reader, function() {
+			drain_download_output(id);
+		}, ULOOP_READ);
+	}
+	catch (e) {
+		download_output_watch = null;
+	}
+
+	return download_output_watch !== null;
+}
+
+function schedule_download_drain_retry(job) {
+	fail_download_protocol(job);
+
+	try {
+		if (download_drain_timer)
+			download_drain_timer.set(100);
+	}
+	catch (e) {
+		/* Overall watchdog and process callback remain active. */
+	}
+}
+
+function rearm_download_output(job) {
+	let fd = null;
+	let replacement = null;
+
+	try {
+		fd = download_output_reader.fileno();
+
+		if (type(fd) == 'int' && fd >= 0)
+			replacement = fs.open(`/proc/self/fd/${fd}`, 're');
+	}
+	catch (e) {
+		replacement = null;
+	}
+
+	if (!replacement) {
+		schedule_download_drain_retry(job);
+		return false;
+	}
+
+	delete_output_watch();
+	close_file(download_output_reader);
+	download_output_reader = replacement;
+
+	if (!register_download_output_watch(job.id)) {
+		/* Keep the fresh FILE and retry draining without fabricating EOF. */
+		schedule_download_drain_retry(job);
+		return false;
+	}
+
+	return true;
+}
+
+drain_download_output = function(id) {
+	const job = download_jobs[id] || (download_job?.id == id ? download_job : null);
+
+	if (!job || job.status != 'running' || job.output_eof ||
+	    !download_output_reader)
+		return;
+
+	let drained = 0;
+
+	while (drained < DOWNLOAD_OUTPUT_DRAIN_BYTES) {
+		let byte;
+
+		try {
+			byte = download_output_reader.read(1);
+		}
+		catch (e) {
+			fail_download_protocol(job);
+			return;
+		}
+
+		if (byte === null) {
+			rearm_download_output(job);
+			return;
+		}
+
+		if (type(byte) != 'string' || length(byte) > 1) {
+			fail_download_protocol(job);
+			return;
+		}
+
+		if (!length(byte)) {
+			mark_download_output_eof(job);
+			return;
+		}
+
+		process_download_byte(job, byte);
+		drained++;
+	}
+
+	try {
+		if (!download_drain_timer || download_drain_timer.set(0) !== true)
+			fail_download_protocol(job);
+	}
+	catch (e) {
+		fail_download_protocol(job);
+	}
+};
+
+function set_download_error(job, error, message, reason) {
+	job.status = 'error';
+	job.phase = 'error';
+	job.error = error;
+	job.message = message;
+
+	if (reason)
+		job.reason = reason;
+}
+
+function finish_download_job(job) {
+	if (job.safety_persistence_failed) {
+		set_download_error(job, 'safety_state_failed',
+			'The profile outcome could not be recorded safely.',
+			'outcome_unknown');
+	}
+	else if (job.preview_timed_out) {
+		set_download_error(job, 'timeout',
+			'The profile preview decision timed out.',
+			job.gate_bypassed ? 'outcome_unknown' : 'preview_timeout');
+	}
+	else if (job.total_timed_out) {
+		set_download_error(job, 'timeout',
+			'The lpac download operation timed out.',
+			(job.accept_attempted || job.gate_bypassed)
+				? 'outcome_unknown' : null);
+	}
+	else if (job.protocol_error) {
+		set_download_error(job, 'execution_failed',
+			'The lpac preview protocol failed.',
+			(job.accept_attempted || job.gate_bypassed)
+				? 'outcome_unknown' : 'preview_protocol_error');
+	}
+	else if (job.decision == 'rejected') {
+		job.status = 'cancelled';
+		job.phase = 'cancelled';
+	}
+	else if (job.accept_attempted) {
+		if (job.preview_seen && job.terminal == 'success' &&
+		    job.exit_code == DOWNLOAD_EXIT_SUCCESS) {
+			if (clear_download_incident(job)) {
+				job.status = 'success';
+				job.phase = 'complete';
+				job.code = 0;
+			}
+			else
+				set_download_error(job, 'safety_state_failed',
+					'The profile was installed but its safety record could not be cleared.',
+					'outcome_unknown');
+		}
+		else {
+			set_download_error(job, 'execution_failed',
+				'The profile installation outcome could not be verified.',
+				'outcome_unknown');
+		}
+	}
+	else if (job.terminal == 'cancelled') {
+		job.status = 'cancelled';
+		job.phase = 'cancelled';
+	}
+	else if (job.exit_code == DOWNLOAD_EXIT_NOT_FOUND) {
+		set_download_error(job, 'not_installed',
+			'The lpac executable is not installed.');
+	}
+	else if (job.exit_code == DOWNLOAD_EXIT_NOT_EXECUTABLE ||
+	         job.exit_code == DOWNLOAD_EXIT_PIPE_FAILED) {
+		set_download_error(job, 'execution_failed',
+			'The lpac download supervisor could not start safely.');
+	}
+	else if (job.terminal == 'error' || job.exit_code == DOWNLOAD_EXIT_FAILED) {
+		set_download_error(job, 'lpac_error', operation_error('download'),
+			'download_failed');
+	}
+	else {
+		set_download_error(job, 'execution_failed',
+			'The lpac download process ended unexpectedly.',
+			'preview_protocol_error');
+	}
+
+	delete job.output_buffer;
+	delete job.preview_metadata;
+	delete job.decision_token;
+	delete job.safety_incident;
+	clear_download_runtime(job.id);
+}
+
+maybe_finish_download_job = function(id) {
+	const job = download_jobs[id] || (download_job?.id == id ? download_job : null);
+
+	if (!job || job.status != 'running' ||
+	    (!job.cleanup_exhausted &&
+	     (!job.process_exited || !job.output_eof)))
+		return;
+
+	finish_download_job(job);
+};
+
+function download_process_exited(id, exit_code) {
+	const job = download_jobs[id] || (download_job?.id == id ? download_job : null);
+
+	if (!job || job.status != 'running')
+		return;
+
+	job.process_exited = true;
+	job.exit_code = type(exit_code) == 'int' ? exit_code : null;
+	close_download_input();
+	drain_download_output(id);
+	maybe_finish_download_job(id);
+
+	if (job.status == 'running' && !job.output_eof)
+		retry_download_kill(job);
+}
+
+function download_start_preflight() {
+	if (read_config() === null)
+		return failure('invalid_config',
+			'The installed lpac configuration is missing or invalid.');
+
+	if (fs.access(LPAC_PATH, 'x') !== true ||
+	    fs.access(SETSID_PATH, 'x') !== true ||
+	    fs.access(SUPERVISOR_PATH, 'x') !== true ||
+	    fs.access(KILL_PATH, 'x') !== true ||
+	    fs.access(SHELL_PATH, 'x') !== true)
+		return failure('not_installed',
+			'The lpac executable or its process supervisor is unavailable.');
+
+	const safety = current_safety_snapshot();
+
+	if (safety.verification_required) {
+		const result = failure('retry_blocked',
+			'A previous profile download must be verified before another download.');
+
+		result.reason = safety.state_invalid
+			? 'safety_state_failed' : 'outcome_unknown';
+		return result;
+	}
+
+	if (download_job?.status == 'running')
+		return failure('busy', 'Another lpac download is already running.');
+
+	return null;
+}
+
+function prepare_download_pipes() {
+	let input_pipe = null;
+	let output_pipe = null;
+	let liveness_pipe = null;
+	let input_writer = null;
+	let output_reader = null;
+	let liveness_writer = null;
+
+	try {
+		input_pipe = fs.pipe();
+		output_pipe = fs.pipe();
+		liveness_pipe = fs.pipe();
+
+		if (type(input_pipe) != 'array' || length(input_pipe) != 2 ||
+		    type(output_pipe) != 'array' || length(output_pipe) != 2 ||
+		    type(liveness_pipe) != 'array' || length(liveness_pipe) != 2)
+			die('pipe failed');
+
+		const input_fd = input_pipe[1].fileno();
+		const output_fd = output_pipe[0].fileno();
+		const liveness_fd = liveness_pipe[1].fileno();
+
+		if (type(input_fd) != 'int' || input_fd < 0 ||
+		    type(output_fd) != 'int' || output_fd < 0 ||
+		    type(liveness_fd) != 'int' || liveness_fd < 0)
+			die('pipe fd failed');
+
+		input_writer = fs.open(`/proc/self/fd/${input_fd}`, 'we');
+		output_reader = fs.open(`/proc/self/fd/${output_fd}`, 're');
+		liveness_writer = fs.open(`/proc/self/fd/${liveness_fd}`, 'we');
+
+		if (!input_writer || !output_reader || !liveness_writer)
+			die('pipe clone failed');
+
+		/* Only the child ends and operation lock remain inheritable. */
+		close_file(input_pipe[1]);
+		input_pipe[1] = null;
+		close_file(output_pipe[0]);
+		output_pipe[0] = null;
+		close_file(liveness_pipe[1]);
+		liveness_pipe[1] = null;
+
+		return {
+			child_input: input_pipe[0],
+			child_output: output_pipe[1],
+			child_liveness: liveness_pipe[0],
+			input_writer,
+			output_reader,
+			liveness_writer
+		};
+	}
+	catch (e) {
+		close_file(input_writer);
+		close_file(output_reader);
+		close_file(liveness_writer);
+		close_pipe_set(input_pipe);
+		close_pipe_set(output_pipe);
+		close_pipe_set(liveness_pipe);
+		return null;
+	}
+}
+
+function restore_download_claim(options) {
+	if (options?.claim)
+		restore_discovery_entry(options.claim.entry_id,
+			options.claim.claim_id);
+}
+
+function start_download(params, options) {
+	options = options || {};
+
+	const preflight = options.preflight_done ? null : download_start_preflight();
+
+	if (preflight !== null) {
+		restore_download_claim(options);
+		return preflight;
+	}
+
+	const decision_token = options.decision_token || random_secret_token();
+
+	if (!valid_secret_token(decision_token)) {
+		restore_download_claim(options);
+		return failure('execution_failed',
+			'Unable to create a secure download decision token.');
+	}
+
+	const lock_state = acquire_lock();
+
+	if (!lock_state.handle) {
+		restore_download_claim(options);
+		return lock_state.result;
+	}
+
+	const lock_handle = lock_state.handle;
+	const pipes = prepare_download_pipes();
+
+	if (!pipes) {
+		release_lock(lock_handle);
+		restore_download_claim(options);
+		return failure('execution_failed',
+			'Unable to prepare secure lpac communication pipes.');
+	}
+
+	const id = next_download_job_id();
+	let child_input_fd = null;
+	let child_output_fd = null;
+	let child_liveness_fd = null;
+
+	try {
+		child_input_fd = pipes.child_input.fileno();
+		child_output_fd = pipes.child_output.fileno();
+		child_liveness_fd = pipes.child_liveness.fileno();
+	}
+	catch (e) {
+		child_input_fd = null;
+	}
+
+	if (type(child_input_fd) != 'int' || child_input_fd < 0 ||
+	    type(child_output_fd) != 'int' || child_output_fd < 0 ||
+	    type(child_liveness_fd) != 'int' || child_liveness_fd < 0) {
+		close_file(pipes.child_input);
+		close_file(pipes.child_output);
+		close_file(pipes.child_liveness);
+		close_file(pipes.input_writer);
+		close_file(pipes.output_reader);
+		close_file(pipes.liveness_writer);
+		release_lock(lock_handle);
+		restore_download_claim(options);
+		return failure('execution_failed',
+			'Unable to prepare secure lpac communication descriptors.');
+	}
+
+	const argv = [
+		SUPERVISOR_PATH, 'download',
+		`${child_input_fd}`, `${child_output_fd}`, `${child_liveness_fd}`,
+		LPAC_PATH
+	];
+
+	for (let param in params)
+		push(argv, param);
+
+	download_job = {
+		id,
+		status: 'running',
+		phase: 'authenticating',
+		decision_token,
+		pid: null,
+		inner_pid: null,
+		identity_pending: true,
+		inner_kill_sent: false,
+		kill_sent: false,
+		liveness_closed: false,
+		cleanup_active: false,
+		cleanup_ticks: 0,
+		cleanup_exhausted: false,
+		process_exited: false,
+		exit_code: null,
+		output_eof: false,
+		output_bytes: 0,
+		output_lines: 0,
+		output_buffer: '',
+		metadata_seen: false,
+		preview_metadata: null,
+		preview_seen: false,
+		decision: null,
+		accept_attempted: false,
+		terminal: null,
+		protocol_error: false,
+		gate_bypassed: false,
+		preview_timed_out: false,
+		total_timed_out: false,
+		safety_incident: null
+	};
+	download_process = null;
+	download_timer = null;
+	download_preview_timer = null;
+	download_drain_timer = null;
+	download_kill_timer = null;
+	download_input_writer = pipes.input_writer;
+	download_output_reader = pipes.output_reader;
+	download_liveness_writer = pipes.liveness_writer;
+	download_output_watch = null;
+
+	try {
+		download_timer = timer(-1, function() {
+			const job = download_jobs[id];
+
+			if (!job || job.status != 'running')
+				return;
+
+			job.total_timed_out = true;
+			job.phase = 'error';
+			close_download_input();
+			retry_download_kill(job);
+		});
+		download_preview_timer = timer(-1, function() {
+			const job = download_jobs[id];
+
+			if (!job || job.status != 'running')
+				return;
+
+			if (job.preview_timed_out) {
+				retry_download_kill(job);
+				return;
+			}
+
+			if (job.phase != 'awaiting_confirmation' || job.decision !== null)
+				return;
+
+			job.preview_timed_out = true;
+			job.decision = 'timed_out';
+			job.phase = 'error';
+			write_download_decision(job, false);
+
+			try {
+				if (download_preview_timer.set(DOWNLOAD_CANCEL_GRACE_MS) !== true)
+					retry_download_kill(job);
+			}
+			catch (e) {
+				retry_download_kill(job);
+			}
+		});
+		download_drain_timer = timer(-1, function() {
+			drain_download_output(id);
+		});
+		download_kill_timer = timer(-1, function() {
+			const job = download_jobs[id];
+
+			if (job?.status == 'running')
+				advance_download_cleanup(job);
+		});
+
+		if (!download_timer || !download_preview_timer ||
+		    !download_drain_timer || !download_kill_timer ||
+		    !register_download_output_watch(id))
+			die('runtime setup failed');
+
+		download_process = process(SETSID_PATH, argv, DOWNLOAD_ENV,
+			function(exit_code) {
+				download_process_exited(id, exit_code);
+			});
+	}
+	catch (e) {
+		download_process = null;
+	}
+
+	/* The child received these descriptors at fork; the parent must drop them. */
+	close_file(pipes.child_input);
+	close_file(pipes.child_output);
+	close_file(pipes.child_liveness);
+	release_lock(lock_handle);
+
+	if (!download_process) {
+		clear_download_runtime(id);
+		download_job = null;
+		restore_download_claim(options);
+		return failure('execution_failed',
+			'Unable to start the lpac download process.');
+	}
+
+	remember_download_job(download_job);
+
+	try {
+		download_job.pid = download_process.pid();
+	}
+	catch (e) {
+		download_job.pid = null;
+	}
+
+	if (options.claim)
+		finalize_discovery_entry(options.claim.entry_id,
+			options.claim.claim_id);
+
+
+	try {
+		if (download_timer.set(DOWNLOAD_TIMEOUT_MS) !== true)
+			fail_download_protocol(download_job);
+	}
+	catch (e) {
+		fail_download_protocol(download_job);
+	}
+
+	if (type(download_job.pid) != 'int' || download_job.pid < 2)
+		fail_download_protocol(download_job);
+
+	if (download_job.status != 'running')
+		return authorized_download_status(download_job);
+
+	return success({
+		job_id: id,
+		status: 'running',
+		phase: 'authenticating',
+		decision_token
+	});
+}
+
+authorized_download_status = function(job) {
+	if (job.status == 'error') {
+		const result = failure(job.error, job.message, job.code);
+
+		if (job.reason)
+			result.reason = job.reason;
+
+		result.data = { safety: current_safety_snapshot() };
+
+		return result;
+	}
+
+	const data = {
+		job_id: job.id,
+		status: job.status,
+		phase: job.phase,
+		safety: current_safety_snapshot()
+	};
+
+	if (job.status == 'running' && job.phase == 'awaiting_confirmation')
+		data.preview = job.metadata_seen ? job.preview_metadata : null;
+
+	return success(data);
+};
+
+function download_status(id, decision_token) {
+	if (id == 0) {
+		if (download_job?.status == 'running')
+			return success({
+				job_id: download_job.id,
+				status: 'running',
+				phase: download_job.phase,
+				safety: current_safety_snapshot()
+			});
+
+		return success({
+			status: 'idle',
+			phase: 'idle',
+			safety: current_safety_snapshot()
+		});
+	}
+
+	const job = download_jobs[id];
+
+	if (!job)
+		return failure('job_not_found', 'The lpac download job was not found.');
+
+	/* Terminal envelopes contain no preview data or owner capability. */
+	if (job.status != 'running')
+		return authorized_download_status(job);
+
+	if (!valid_secret_token(decision_token) ||
+	    !constant_time_equal(job.decision_token, decision_token))
+		return success({
+			job_id: job.id,
+			status: job.status,
+			phase: job.phase,
+			safety: current_safety_snapshot()
+		});
+
+	return authorized_download_status(job);
+}
+
+function respond_download_preview(id, decision_token, accept) {
+	const job = download_jobs[id];
+
+	if (!job)
+		return failure('job_not_found', 'The lpac download job was not found.');
+
+	if (!valid_secret_token(decision_token) ||
+	    !constant_time_equal(job.decision_token, decision_token))
+		return failure('not_authorized',
+			'The download decision token is invalid.');
+
+	if (job.status != 'running' || job.terminal !== null ||
+	    job.protocol_error || job.preview_timed_out ||
+	    job.total_timed_out || job.decision !== null)
+		return failure('invalid_state',
+			'The profile preview decision is no longer available.');
+
+	if (job.phase != 'awaiting_confirmation' || !job.preview_seen)
+		return failure('not_ready',
+			'The profile preview is not ready for a decision.');
+
+	if (accept && !begin_download_incident(job)) {
+		cancel_timer(download_preview_timer);
+		download_preview_timer = null;
+		job.decision = 'rejected';
+		job.phase = 'cancelling';
+		write_download_decision(job, false);
+		retry_download_kill(job);
+
+		const result = failure('safety_state_failed',
+			'Unable to record the profile installation safety state.');
+		result.reason = 'preview_protocol_error';
+		return result;
+	}
+
+	cancel_timer(download_preview_timer);
+	download_preview_timer = null;
+	job.decision = accept ? 'accepted' : 'rejected';
+	job.phase = accept ? 'installing' : 'cancelling';
+
+	const sent = write_download_decision(job, accept);
+
+	try {
+		if (accept) {
+			if (!download_timer || download_timer.set(DOWNLOAD_TIMEOUT_MS) !== true)
+				fail_download_protocol(job);
+		}
+		else if (download_kill_timer &&
+		         download_kill_timer.set(DOWNLOAD_CANCEL_GRACE_MS) !== true) {
+			retry_download_kill(job);
+		}
+	}
+	catch (e) {
+		if (accept)
+			fail_download_protocol(job);
+		else
+			retry_download_kill(job);
+	}
+
+	if (!sent && accept) {
+		fail_download_protocol(job);
+		const result = failure('execution_failed',
+			'Unable to deliver the profile installation decision.');
+		result.reason = 'outcome_unknown';
+		result.data = { safety: current_safety_snapshot() };
+		return result;
+	}
+
+	if (!sent)
+		retry_download_kill(job);
+
+	return success({
+		job_id: job.id,
+		status: 'running',
+		phase: job.phase
+	});
+}
+
+function verification_incomplete(snapshot) {
+	const result = failure('verification_incomplete',
+		'Refresh Profiles and Notifications before acknowledging this download.');
+
+	result.data = snapshot;
+	return result;
+}
+
+function acknowledge_download_verification(incident_id) {
+	if (!valid_secret_token(incident_id))
+		return failure('invalid_argument',
+			'The download verification incident identifier is invalid.');
+
+	const state = load_safety_state();
+
+	if (state === null) {
+		const snapshot = safety_snapshot(null);
+
+		if (!valid_secret_token(snapshot.incident_id) ||
+		    !constant_time_equal(snapshot.incident_id, incident_id))
+			return failure('not_authorized',
+				'The download verification incident is no longer current.');
+
+		if (!snapshot.profiles_refreshed || !snapshot.notifications_refreshed)
+			return verification_incomplete(snapshot);
+
+		const current = load_safety_state();
+
+		if (current !== null) {
+			safety_snapshot(current);
+			return failure('not_authorized',
+				'The download verification incident is no longer current.');
+		}
+
+		const recovered = empty_safety_state();
+		recovered.notifications = recovery_notification_guards;
+
+		const saved = save_safety_state(recovered, true);
+
+		if (saved === SAFETY_STATE_BECAME_VALID) {
+			clear_recovery_safety();
+			return failure('not_authorized',
+				'The download verification incident is no longer current.');
+		}
+
+		if (!saved && !repair_safety_file(recovered)) {
+			const latest = load_safety_state();
+
+			if (latest !== null) {
+				safety_snapshot(latest);
+				return failure('not_authorized',
+					'The download verification incident is no longer current.');
+			}
+
+			return failure('safety_state_failed',
+				'Unable to recover the persistent lpac safety state.');
+		}
+
+		clear_recovery_safety();
+		return success({ verification_required: false });
+	}
+
+	if (!state.download_incident)
+		return failure('invalid_state',
+			'There is no profile download awaiting verification.');
+
+	if (!constant_time_equal(state.download_incident, incident_id))
+		return failure('not_authorized',
+			'The download verification incident is no longer current.');
+
+	const snapshot = safety_snapshot(state);
+
+	if (!state.profiles_refreshed || !state.notifications_refreshed)
+		return verification_incomplete(snapshot);
+
+	state.download_incident = null;
+	state.profiles_refreshed = false;
+	state.notifications_refreshed = false;
+
+	return save_safety_state(state)
+		? success({ verification_required: false })
+		: failure('safety_state_failed',
+			'Unable to clear the persistent lpac safety state.');
+}
+
+function run_lpac(request, params, kind, needs_lock, context, executable) {
+	if (kind != 'version' && kind != 'drivers' && kind != 'apdu_devices' &&
+	    read_config() === null)
+		return failure('invalid_config',
+			'The installed lpac configuration is missing or invalid.');
+
+	if (fs.access(SETSID_PATH, 'x') !== true ||
+	    fs.access(SUPERVISOR_PATH, 'x') !== true ||
+	    fs.access(KILL_PATH, 'x') !== true ||
+	    fs.access(SHELL_PATH, 'x') !== true)
+		return failure('not_installed',
+			'The lpac process supervisor is unavailable.');
+
+	let child_command = executable || LPAC_PATH;
+	let child_params = params;
+
+	if (needs_lock) {
+		const handle = open_lock_file();
+
+		if (!handle)
+			return failure('lock_failed',
+				'Unable to prepare the lpac operation lock.');
+
+		release_lock(handle);
+		child_command = FLOCK_PATH;
+		child_params = [ '-n', LOCK_PATH, LPAC_PATH ];
+
+		for (let param in params)
+			push(child_params, param);
+	}
+
+	const command = SETSID_PATH;
+	const exec_params = [
+		SUPERVISOR_PATH, 'oneshot',
+		`${RPC_OPERATION_CHILD_TIMEOUT_SECONDS}`, child_command
+	];
+
+	for (let param in child_params)
+		push(exec_params, param);
+
+	const safety_context = index([
+		'profiles', 'notifications', 'remove_notification'
+	], kind) >= 0 ? capture_safety_context() : null;
+	let callback_called = false;
+
+	try {
+		const pending = ubus.defer('file', 'exec', {
+			command,
+			params: exec_params
+		}, function(status, reply) {
+			callback_called = true;
+
+			let result;
+
+			try {
+				if (status != STATUS_OK) {
+					result = exec_failure(status, needs_lock);
+				}
+				else if (type(reply) != 'object') {
+					result = failure('execution_failed',
+						'The lpac process returned no execution result.');
+				}
+				else {
+					result = parse_lpac_output(reply.stdout, kind, context);
+
+					if (type(reply.code) != 'int')
+						result = failure('execution_failed',
+							'The lpac process returned no exit status.');
+					else if (reply.code == CHILD_EXIT_TIMEOUT)
+						result = failure('timeout', 'The lpac operation timed out.');
+					else if (reply.code != 0) {
+						if (needs_lock && reply.code == 1 &&
+						    !result.success && result.error == 'invalid_response')
+							result = failure('busy',
+								'Another lpac operation is already running.');
+						else if (reply.code == 127 &&
+						         !result.success && result.error == 'invalid_response')
+							result = failure('not_installed',
+								'The lpac executable is not installed.');
+						else if (result.success || result.error == 'invalid_response')
+							result = failure('execution_failed',
+								'The lpac process exited unexpectedly.', reply.code);
+					}
+				}
+			}
+			catch (e) {
+				result = failure('invalid_response',
+					'Unable to normalize the lpac response.');
+			}
+
+			result = mark_notification_outcome_unknown(result, kind);
+
+			if (result.success && kind == 'profiles' &&
+			    !mark_download_verification('profiles', safety_context)) {
+				result = failure('safety_state_failed',
+					'The profiles were read but the download verification state could not be updated.');
+			}
+			else if (result.success && kind == 'notifications') {
+				const notifications = apply_notification_safety(
+					result.data, safety_context);
+
+				if (notifications === SAFETY_UPDATE_FAILED)
+					result = failure('safety_state_failed',
+						'The notifications were read but their safety state could not be updated.');
+				else
+					result.data = notifications;
+			}
+			else if (result.success && kind == 'remove_notification' &&
+			         !clear_snapshot_notification_incidents(safety_context)) {
+				result = failure('safety_state_failed',
+					'The notifications were removed but their replay guards could not be cleared.');
+				result.reason = 'provider_outcome_unknown';
+			}
+
+			/* stderr is intentionally never inspected, logged, or returned. */
+			try {
+				request.reply(result);
+			}
+			catch (e) {
+				/* The outer rpcd request may have reached its guard timeout. */
+			}
+		});
+
+		if (!pending && !callback_called) {
+			return failure('execution_failed',
+				'Unable to start the lpac process.');
+		}
+
+		return pending;
+	}
+	catch (e) {
+		if (!callback_called) {
+			return failure('execution_failed',
+				'Unable to start the lpac process.');
+		}
+
+		/* An immediate defer failure may already have invoked the callback. */
+		return null;
+	}
+}
+
+function normalize_flag(value) {
+	if (value === true || value === 1 || value === '1')
+		return '1';
+
+	if (value === false || value === 0 || value === '0')
+		return '0';
+
+	return null;
+}
+
+function default_profile_refresh_preference() {
+	return { asked: false, refresh: false };
+}
+
+function read_profile_refresh_preference() {
+	const fallback = default_profile_refresh_preference();
+	let uci = null;
+	let loaded = false;
+	let preference = fallback;
+
+	try {
+		uci = cursor();
+
+		if (uci && uci.load(PREFERENCE_CONFIG)) {
+			loaded = true;
+			const section = uci.get_all(PREFERENCE_CONFIG, PREFERENCE_SECTION);
+
+			if (type(section) == 'object' &&
+			    section['.name'] == PREFERENCE_SECTION &&
+			    section['.type'] == 'preferences' &&
+			    index([ '0', '1' ], section.refresh_prompted) >= 0 &&
+			    index([ '0', '1' ], section.refresh_default) >= 0) {
+				const asked = section.refresh_prompted == '1';
+
+				preference = {
+					asked,
+					refresh: asked && section.refresh_default == '1'
+				};
+			}
+		}
+	}
+	catch (e) {
+		preference = fallback;
+	}
+
+	if (loaded) {
+		try { uci.unload(PREFERENCE_CONFIG); }
+		catch (e) { preference = fallback; }
+	}
+
+	return preference;
+}
+
+function commit_profile_refresh_preference(refresh) {
+	let uci = null;
+	let loaded = false;
+	let committed = false;
+
+	try {
+		uci = cursor();
+
+		if (uci && uci.load(PREFERENCE_CONFIG)) {
+			loaded = true;
+			committed =
+				uci.set(PREFERENCE_CONFIG, PREFERENCE_SECTION, 'preferences') &&
+				uci.set(PREFERENCE_CONFIG, PREFERENCE_SECTION,
+					'refresh_prompted', '1') &&
+				uci.set(PREFERENCE_CONFIG, PREFERENCE_SECTION,
+					'refresh_default', refresh ? '1' : '0') &&
+				uci.commit(PREFERENCE_CONFIG);
+		}
+	}
+	catch (e) {
+		committed = false;
+	}
+
+	if (loaded) {
+		try { uci.unload(PREFERENCE_CONFIG); }
+		catch (e) { /* A fresh cursor readback is authoritative below. */ }
+	}
+
+	return committed;
+}
+
+function write_profile_refresh_preference(refresh) {
+	if (!commit_profile_refresh_preference(refresh))
+		return null;
+
+	const readback = read_profile_refresh_preference();
+
+	if (readback.asked && readback.refresh === refresh)
+		return readback;
+
+	/* A successful but unverifiable opt-in must fail off before returning. */
+	commit_profile_refresh_preference(false);
+	return null;
+}
+
+function default_config() {
+	return {
+		global: {
+			apdu_backend: 'uqmi',
+			http_backend: 'curl',
+			apdu_debug: '0',
+			http_debug: '0',
+			custom_isd_r_aid: DEFAULT_AID
+		},
+		at: { device: '/dev/ttyUSB2', debug: '0' },
+		uqmi: { device: '/dev/cdc-wdm0', debug: '0' },
+		mbim: {
+			device: '/dev/cdc-wdm0',
+			proxy: '1',
+			skip_slot_mapping: '0'
+		}
+	};
+}
+
+function normalize_config(config, mode) {
+	mode = mode || 'strict';
+
+	if (!has_exact_keys(config, {
+		global: true, at: true, uqmi: true, mbim: true
+	    }) ||
+	    !has_exact_keys(config.global, {
+		apdu_backend: true,
+		http_backend: true,
+		apdu_debug: true,
+		http_debug: true,
+		custom_isd_r_aid: true
+	    }) ||
+	    !has_exact_keys(config.at, { device: true, debug: true }) ||
+	    !has_exact_keys(config.uqmi, { device: true, debug: true }) ||
+	    !has_exact_keys(config.mbim, {
+		device: true, proxy: true, skip_slot_mapping: true
+	    }))
+		return null;
+
+	const fallback = default_config();
+	let apdu_backend = config.global.apdu_backend;
+	let http_backend = config.global.http_backend;
+	let apdu_debug = normalize_flag(config.global.apdu_debug);
+	let http_debug = normalize_flag(config.global.http_debug);
+	let aid = config.global.custom_isd_r_aid;
+
+	if (type(apdu_backend) != 'string' ||
+	    index([ 'uqmi', 'mbim', 'at' ], apdu_backend) < 0) {
+		if (mode != 'recovery')
+			return null;
+
+		apdu_backend = fallback.global.apdu_backend;
+	}
+
+	if (http_backend !== 'curl') {
+		if (mode != 'recovery')
+			return null;
+
+		http_backend = 'curl';
+	}
+
+	if (apdu_debug === null || http_debug === null || !valid_aid(aid)) {
+		if (mode != 'recovery')
+			return null;
+
+		apdu_debug = apdu_debug === null ? fallback.global.apdu_debug : apdu_debug;
+		http_debug = http_debug === null ? fallback.global.http_debug : http_debug;
+		aid = valid_aid(aid) ? aid : fallback.global.custom_isd_r_aid;
+	}
+
+	function section_value(section, option, validator, fallback_value) {
+		const value = config[section][option];
+		const required = mode == 'strict' ||
+			(mode == 'active' && section == apdu_backend);
+
+		if (validator(value))
+			return value;
+
+		return required ? INVALID : fallback_value;
+	}
+
+	function section_flag(section, option, fallback_value) {
+		const value = normalize_flag(config[section][option]);
+		const required = mode == 'strict' ||
+			(mode == 'active' && section == apdu_backend);
+
+		return value !== null ? value : (required ? INVALID : fallback_value);
+	}
+
+	const at_device = section_value('at', 'device', valid_device_path,
+		fallback.at.device);
+	const uqmi_device = section_value('uqmi', 'device', function(value) {
+		return valid_device_path(value) &&
+			(mode != 'strict' && apdu_backend != 'uqmi' || valid_uqmi_device(value));
+	}, fallback.uqmi.device);
+	const mbim_device = section_value('mbim', 'device', valid_device_path,
+		fallback.mbim.device);
+	const at_debug = section_flag('at', 'debug', fallback.at.debug);
+	const uqmi_debug = section_flag('uqmi', 'debug', fallback.uqmi.debug);
+	const mbim_proxy = section_flag('mbim', 'proxy', fallback.mbim.proxy);
+	const mbim_skip_slot_mapping = section_flag('mbim', 'skip_slot_mapping',
+		fallback.mbim.skip_slot_mapping);
+
+	if (at_device === INVALID || uqmi_device === INVALID ||
+	    mbim_device === INVALID || at_debug === INVALID ||
+	    uqmi_debug === INVALID || mbim_proxy === INVALID ||
+	    mbim_skip_slot_mapping === INVALID)
+		return null;
+
+	return {
+		global: {
+			apdu_backend,
+			http_backend,
+			apdu_debug,
+			http_debug,
+			custom_isd_r_aid: uc(aid)
+		},
+		at: {
+			device: at_device,
+			debug: at_debug
+		},
+		uqmi: {
+			device: uqmi_device,
+			debug: uqmi_debug
+		},
+		mbim: {
+			device: mbim_device,
+			proxy: mbim_proxy,
+			skip_slot_mapping: mbim_skip_slot_mapping
+		}
+	};
+}
+
+function uci_value(uci, section, option, fallback) {
+	const value = uci.get('lpac', section, option);
+
+	if (value === null)
+		return fallback;
+
+	return type(value) == 'string' ? value : INVALID;
+}
+
+read_config = function(mode) {
+	mode = mode || 'active';
+	const uci = cursor();
+	let config = null;
+
+	try {
+		if (!uci || !uci.load('lpac'))
+			return mode == 'recovery' ? default_config() : null;
+
+		const raw = {
+			global: {
+				apdu_backend: uci_value(uci, 'global', 'apdu_backend', 'uqmi'),
+				http_backend: uci_value(uci, 'global', 'http_backend', 'curl'),
+				apdu_debug: uci_value(uci, 'global', 'apdu_debug', '0'),
+				http_debug: uci_value(uci, 'global', 'http_debug', '0'),
+				custom_isd_r_aid:
+					uci_value(uci, 'global', 'custom_isd_r_aid', DEFAULT_AID)
+			},
+			at: {
+				device: uci_value(uci, 'at', 'device', '/dev/ttyUSB2'),
+				debug: uci_value(uci, 'at', 'debug', '0')
+			},
+			uqmi: {
+				device: uci_value(uci, 'uqmi', 'device', '/dev/cdc-wdm0'),
+				debug: uci_value(uci, 'uqmi', 'debug', '0')
+			},
+			mbim: {
+				device: uci_value(uci, 'mbim', 'device', '/dev/cdc-wdm0'),
+				proxy: uci_value(uci, 'mbim', 'proxy', '1'),
+				skip_slot_mapping:
+					uci_value(uci, 'mbim', 'skip_slot_mapping', '0')
+			}
+		};
+
+		config = normalize_config(raw, mode);
+
+		if (config === null && mode == 'recovery')
+			config = normalize_config(raw, 'recovery') || default_config();
+	}
+	catch (e) {
+		config = mode == 'recovery' ? default_config() : null;
+	}
+
+	if (uci)
+		uci.unload('lpac');
+
+	return config;
+};
+
+function write_config(config) {
+	const uci = cursor();
+	let written = false;
+
+	try {
+		if (!uci || !uci.load('lpac'))
+			return false;
+
+		written =
+			uci.set('lpac', 'global', 'global') &&
+			uci.set('lpac', 'global', 'apdu_backend', config.global.apdu_backend) &&
+			uci.set('lpac', 'global', 'http_backend', config.global.http_backend) &&
+			uci.set('lpac', 'global', 'apdu_debug', config.global.apdu_debug) &&
+			uci.set('lpac', 'global', 'http_debug', config.global.http_debug) &&
+			uci.set('lpac', 'global', 'custom_isd_r_aid',
+				config.global.custom_isd_r_aid) &&
+			uci.set('lpac', 'at', 'at') &&
+			uci.set('lpac', 'at', 'device', config.at.device) &&
+			uci.set('lpac', 'at', 'debug', config.at.debug) &&
+			uci.set('lpac', 'uqmi', 'uqmi') &&
+			uci.set('lpac', 'uqmi', 'device', config.uqmi.device) &&
+			uci.set('lpac', 'uqmi', 'debug', config.uqmi.debug) &&
+			uci.set('lpac', 'mbim', 'mbim') &&
+			uci.set('lpac', 'mbim', 'device', config.mbim.device) &&
+			uci.set('lpac', 'mbim', 'proxy', config.mbim.proxy) &&
+			uci.set('lpac', 'mbim', 'skip_slot_mapping',
+				config.mbim.skip_slot_mapping) &&
+			uci.commit('lpac');
+	}
+	catch (e) {
+		written = false;
+	}
+
+	if (uci)
+		uci.unload('lpac');
+
+	return written;
+}
+
+const methods = {
+	get_version: {
+		args: {},
+		call: function(request) {
+			return run_lpac(request, [ 'version' ], 'version', false);
+		}
+	},
+
+	get_drivers: {
+		args: {},
+		call: function(request) {
+			return run_lpac(request, [ 'driver', 'list' ], 'drivers', false);
+		}
+	},
+
+	list_apdu_devices: {
+		args: { backend: '' },
+		call: function(request) {
+			const backend = request.args?.backend;
+
+			if (backend == 'uqmi' || backend == 'mbim')
+				return list_modem_ports(backend);
+
+			if (backend != 'at')
+				return failure('invalid_argument',
+					'Only AT, QMI, and MBIM device discovery is supported.');
+
+			if (fs.access(ENV_PATH, 'x') !== true ||
+			    fs.access(LPAC_BINARY_PATH, 'x') !== true)
+				return failure('not_installed',
+					'The native lpac device enumerator is unavailable.');
+
+			return run_lpac(request, [
+				`LPAC_APDU=${backend}`,
+				'LPAC_HTTP=curl',
+				LPAC_BINARY_PATH,
+				'driver', 'apdu', 'list'
+			], 'apdu_devices', false, { backend }, ENV_PATH);
+		}
+	},
+
+	get_info: {
+		args: {},
+		call: function(request) {
+			return run_lpac(request, [ 'chip', 'info' ], 'info', true);
+		}
+	},
+
+	list_profiles: {
+		args: {},
+		call: function(request) {
+			return run_lpac(request, [ 'profile', 'list' ], 'profiles', true);
+		}
+	},
+
+	list_notifications: {
+		args: {},
+		call: function(request) {
+			return run_lpac(request, [ 'notification', 'list' ],
+				'notifications', true);
+		}
+	},
+
+	set_default_smdp: {
+		args: { address: '' },
+		call: function(request) {
+			const address = optional_text(request.args?.address, 255);
+
+			if (address === null || !length(address) || !valid_smdp(address))
+				return failure('invalid_argument',
+					'The default SM-DP+ address is invalid.');
+
+			return run_lpac(request,
+				[ 'chip', 'defaultsmdp', address ],
+				'set_default_smdp', true);
+		}
+	},
+
+	discover_profiles: {
+		args: { smds: '', imei: '' },
+		call: function(request) {
+			const smds = optional_text(request.args?.smds, 255);
+			const imei = optional_text(request.args?.imei, 16);
+
+			if (smds === null || imei === null ||
+			    (length(smds) && !valid_smdp(smds)) ||
+			    (length(imei) && !valid_imei(imei)))
+				return failure('invalid_argument',
+					'The SM-DS address or IMEI is invalid.');
+
+			const params = [ 'profile', 'discovery', '-j' ];
+
+			if (length(smds))
+				push(params, '-s', smds);
+
+			if (length(imei))
+				push(params, '-i', imei);
+
+			return start_discovery_job(params, imei);
+		}
+	},
+
+	get_discovery_status: {
+		args: { job_id: 0, owner_token: '' },
+		call: function(request) {
+			const id = request.args?.job_id;
+
+			if (type(id) != 'int' || id < 0 || id > 2147483647)
+				return failure('invalid_argument',
+					'The discovery job identifier is invalid.');
+
+			return async_job_status('discovery', id,
+				request.args?.owner_token);
+		}
+	},
+
+	download_profile: {
+		args: {
+			activation_code: '',
+			imei: '',
+			confirmation_code: ''
+		},
+		call: function(request) {
+			let activation_code = request.args?.activation_code;
+			const imei = optional_text(request.args?.imei, 16);
+			const confirmation_code = optional_text(request.args?.confirmation_code, 255);
+
+			activation_code = normalize_activation_code(activation_code);
+
+			if (activation_code !== null)
+				activation_code = optional_text(activation_code, 4096);
+
+			if (activation_code === null || imei === null ||
+			    confirmation_code === null)
+				return failure('invalid_argument',
+					'The profile download parameters are invalid.');
+
+			const params = [ 'profile', 'download', '-p' ];
+
+			if (lc(substr(activation_code, 0, 4)) == 'lpa:')
+				activation_code = 'LPA:' + substr(activation_code, 4);
+
+			if (!valid_activation_code(activation_code, confirmation_code))
+				return failure('invalid_argument',
+					'The LPA activation code is invalid.');
+
+			activation_code = canonicalize_activation_code(activation_code);
+			push(params, '-a', activation_code);
+
+			if (length(imei)) {
+				if (!valid_imei(imei))
+					return failure('invalid_argument', 'The IMEI is invalid.');
+
+				push(params, '-i', imei);
+			}
+
+			if (length(confirmation_code))
+				push(params, '-c', confirmation_code);
+
+			return start_download(params);
+		}
+	},
+
+	download_discovered_profile: {
+		args: { entry_id: '', confirmation_code: '' },
+		call: function(request) {
+			const entry_id = request.args?.entry_id;
+			const confirmation_code = optional_text(
+				request.args?.confirmation_code, 255);
+
+			if (!valid_secret_token(entry_id) || confirmation_code === null)
+				return failure('invalid_argument',
+					'The discovered profile entry or confirmation code is invalid.');
+
+			const preflight = download_start_preflight();
+
+			if (preflight !== null)
+				return preflight;
+
+			const decision_token = random_secret_token();
+
+			if (!valid_secret_token(decision_token))
+				return failure('execution_failed',
+					'Unable to create a secure download decision token.');
+
+			const entry = claim_discovery_entry(entry_id, decision_token);
+
+			if (!entry)
+				return failure('entry_unavailable',
+					'The discovered profile entry is expired or unavailable.');
+
+			const params = [
+				'profile', 'download', '-p', '-s', entry.smdp,
+				'-m', entry.event_id
+			];
+
+			if (length(entry.imei))
+				push(params, '-i', entry.imei);
+
+			if (length(confirmation_code))
+				push(params, '-c', confirmation_code);
+
+			return start_download(params, {
+				preflight_done: true,
+				decision_token,
+				claim: {
+					entry_id,
+					claim_id: decision_token
+				}
+			});
+		}
+	},
+
+	get_download_status: {
+		args: { job_id: 0, decision_token: '' },
+		call: function(request) {
+			const id = request.args?.job_id;
+			const decision_token = request.args?.decision_token;
+
+			if (type(id) != 'int' || id < 0 || id > 2147483647)
+				return failure('invalid_argument',
+					'The profile download job identifier is invalid.');
+
+			return download_status(id, decision_token);
+		}
+	},
+
+	respond_download_preview: {
+		args: { job_id: 0, decision_token: '', accept: false },
+		call: function(request) {
+			const id = request.args?.job_id;
+			const decision_token = request.args?.decision_token;
+			const accept = request.args?.accept;
+
+			if (type(id) != 'int' || id < 1 || id > 2147483647 ||
+			    type(accept) != 'bool')
+				return failure('invalid_argument',
+					'The profile preview decision is invalid.');
+
+			return respond_download_preview(id, decision_token, accept);
+		}
+	},
+
+	acknowledge_download_verification: {
+		args: { incident_id: '' },
+		call: function(request) {
+			return acknowledge_download_verification(request.args?.incident_id);
+		}
+	},
+
+	enable_profile: {
+		args: { iccid: '', refresh: false },
+		call: function(request) {
+			const id = request.args?.iccid;
+			let refresh = request.args?.refresh;
+
+			if (refresh === null)
+				refresh = false;
+
+			if (!valid_profile_id(id) || type(refresh) != 'bool')
+				return failure('invalid_argument',
+					'The profile identifier or refresh flag is invalid.');
+
+			return run_lpac(request,
+				[ 'profile', 'enable', id, refresh ? '1' : '0' ],
+				'enable', true);
+		}
+	},
+
+	disable_profile: {
+		args: { iccid: '', refresh: false },
+		call: function(request) {
+			const id = request.args?.iccid;
+			let refresh = request.args?.refresh;
+
+			if (refresh === null)
+				refresh = false;
+
+			if (!valid_profile_id(id) || type(refresh) != 'bool')
+				return failure('invalid_argument',
+					'The profile identifier or refresh flag is invalid.');
+
+			return run_lpac(request,
+				[ 'profile', 'disable', id, refresh ? '1' : '0' ],
+				'disable', true);
+		}
+	},
+
+	nickname_profile: {
+		args: { iccid: '', nickname: '' },
+		call: function(request) {
+			const iccid = request.args?.iccid;
+			const nickname = request.args?.nickname;
+
+			if (!valid_iccid(iccid) || type(nickname) != 'string' ||
+			    length(nickname) > 64 || match(nickname, /[[:cntrl:]]/) !== null)
+				return failure('invalid_argument',
+					'The ICCID or profile nickname is invalid.');
+
+			return run_lpac(request,
+				[ 'profile', 'nickname', iccid, nickname ], 'nickname', true);
+		}
+	},
+
+	delete_profile: {
+		args: { iccid: '' },
+		call: function(request) {
+			const id = request.args?.iccid;
+
+			if (!valid_profile_id(id))
+				return failure('invalid_argument',
+					'The profile identifier is invalid.');
+
+			return run_lpac(request,
+				[ 'profile', 'delete', id ], 'delete', true);
+		}
+	},
+
+	remove_all_notifications: {
+		args: {},
+		call: function(request) {
+			return run_lpac(request,
+				[ 'notification', 'remove', '-a' ],
+				'remove_notification', true);
+		}
+	},
+
+	process_notification: {
+		args: { seq: '', remove_after_success: false },
+		call: function(request) {
+			const seq = canonical_uint32(request.args?.seq);
+			let remove_after_success = request.args?.remove_after_success;
+
+			if (remove_after_success === null)
+				remove_after_success = false;
+
+			if (seq === null || type(remove_after_success) != 'bool')
+				return failure('invalid_argument',
+					'The notification sequence number or removal flag is invalid.');
+
+			const params = [ 'notification', 'process' ];
+
+			if (remove_after_success)
+				push(params, '-r');
+
+			push(params, seq);
+
+			return start_notification_job(params, seq, remove_after_success);
+		}
+	},
+
+	get_notification_status: {
+		args: { job_id: 0, owner_token: '' },
+		call: function(request) {
+			const id = request.args?.job_id;
+
+			if (type(id) != 'int' || id < 0 || id > 2147483647)
+				return failure('invalid_argument',
+					'The notification job identifier is invalid.');
+
+			return async_job_status('notification', id,
+				request.args?.owner_token);
+		}
+	},
+
+	get_profile_refresh_preference: {
+		args: {},
+		call: function() {
+			return success(read_profile_refresh_preference());
+		}
+	},
+
+	set_profile_refresh_preference: {
+		args: { refresh: false },
+		call: function(request) {
+			const refresh = request.args?.refresh;
+
+			if (type(request.args) != 'object' ||
+			    !('refresh' in request.args) || type(refresh) != 'bool')
+				return failure('invalid_argument',
+					'The profile refresh preference must be a boolean.');
+
+			const preference = write_profile_refresh_preference(refresh);
+
+			return preference !== null
+				? success(preference)
+				: failure('config_write_failed',
+					'Unable to commit the profile refresh preference.');
+		}
+	},
+
+	get_config: {
+		args: {},
+		call: function() {
+			const config = read_config();
+
+			if (config !== null)
+				return success(config);
+
+			const result = failure('invalid_config',
+				'The installed lpac configuration is missing or invalid.');
+			const recovery = read_config('recovery');
+
+			if (recovery !== null)
+				result.data = recovery;
+
+			return result;
+		}
+	},
+
+	set_config: {
+		args: { config: {} },
+		call: function(request) {
+			const config = normalize_config(request.args?.config);
+
+			if (config === null)
+				return failure('invalid_config',
+					'The supplied lpac configuration is invalid.');
+
+			const lock_state = acquire_lock();
+
+			if (!lock_state.handle)
+				return lock_state.result;
+
+			const written = write_config(config);
+			release_lock(lock_state.handle);
+
+			return written
+				? success(config)
+				: failure('config_write_failed',
+					'Unable to commit the lpac configuration.');
+		}
+	}
+};
+
+return { 'luci.lpac': methods };

@@ -1,0 +1,57 @@
+{
+	"admin/network/lpac": {
+		"title": "eSIM Manager",
+		"order": 90,
+		"action": {
+			"type": "firstchild"
+		},
+		"depends": {
+			"acl": [ "luci-app-lpac" ]
+		}
+	},
+
+	"admin/network/lpac/overview": {
+		"title": "Overview",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "lpac/overview"
+		}
+	},
+
+	"admin/network/lpac/profiles": {
+		"title": "Profiles",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "lpac/profiles"
+		}
+	},
+
+	"admin/network/lpac/download": {
+		"title": "Download",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "lpac/download"
+		}
+	},
+
+	"admin/network/lpac/notifications": {
+		"title": "Notifications",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "lpac/notifications"
+		}
+	},
+
+	"admin/network/lpac/settings": {
+		"title": "Settings",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "lpac/settings"
+		}
+	}
+}

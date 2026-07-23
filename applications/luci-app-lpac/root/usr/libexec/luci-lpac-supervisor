@@ -1,0 +1,157 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+
+# This helper is invoked only with fixed argv assembled by the rpcd backend.
+exec 2>/dev/null
+
+SETSID=/usr/bin/setsid
+SHELL=/bin/sh
+KILL=/bin/kill
+EXIT_SUCCESS=64
+EXIT_NOT_FOUND=65
+EXIT_NOT_EXECUTABLE=66
+EXIT_FAILED=67
+EXIT_SIGNALED=68
+EXIT_PIPE_FAILED=69
+EXIT_TIMEOUT=70
+
+valid_number() {
+	case $1 in
+		''|*[!0-9]*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+valid_pid() {
+	valid_number "$1" && [ "$1" -gt 1 ]
+}
+
+kill_group() {
+	valid_pid "$1" || return 1
+	"$KILL" -KILL -- "-$1" || "$KILL" -KILL "-$1"
+}
+
+cleanup_guard() {
+	valid_pid "$guard_pid" || return 0
+	"$KILL" -TERM "$guard_pid" >/dev/null 2>&1 || :
+	wait "$guard_pid" 2>/dev/null || :
+}
+
+map_exit() {
+	code=$1
+
+	[ "$code" -eq 0 ] && exit "$EXIT_SUCCESS"
+	[ "$code" -eq 127 ] && exit "$EXIT_NOT_FOUND"
+	[ "$code" -eq 126 ] && exit "$EXIT_NOT_EXECUTABLE"
+	[ "$code" -ge 128 ] && [ "$code" -lt 255 ] && exit "$EXIT_SIGNALED"
+	exit "$EXIT_FAILED"
+}
+
+start_supervised_child() {
+	"$SETSID" "$SHELL" -c '
+		printf "@luci-lpac-pgid:%s\n" "$$" || exit 69
+		exec "$@"
+	' luci-lpac-child "$@" 0<"$child_stdin" &
+	child_pid=$!
+
+	valid_pid "$child_pid" || exit "$EXIT_PIPE_FAILED"
+
+	(
+		IFS= read -r _ <"/proc/self/fd/$live_fd"
+		kill_group "$child_pid"
+	) >/dev/null 2>&1 &
+	guard_pid=$!
+
+	if ! valid_pid "$guard_pid" || [ "$guard_pid" -eq "$child_pid" ]; then
+		kill_group "$child_pid" >/dev/null 2>&1 || :
+		wait "$child_pid" 2>/dev/null || :
+		exit "$EXIT_PIPE_FAILED"
+	fi
+}
+
+run_supervised() {
+	start_supervised_child "$@"
+	wait "$child_pid"
+	code=$?
+	kill_group "$child_pid" >/dev/null 2>&1 || :
+	cleanup_guard
+	map_exit "$code"
+}
+
+mode=$1
+shift || exit "$EXIT_PIPE_FAILED"
+
+case $mode in
+	download)
+		[ "$#" -ge 4 ] || exit "$EXIT_PIPE_FAILED"
+		in_fd=$1
+		out_fd=$2
+		live_fd=$3
+		valid_number "$in_fd" && valid_number "$out_fd" &&
+			valid_number "$live_fd" || exit "$EXIT_PIPE_FAILED"
+		shift 3
+		( : 0<"/proc/self/fd/$in_fd" 1>"/proc/self/fd/$out_fd" ) ||
+			exit "$EXIT_PIPE_FAILED"
+		child_stdin=/proc/self/fd/$in_fd
+		exec 0<"/proc/self/fd/$in_fd" 1>"/proc/self/fd/$out_fd" ||
+			exit "$EXIT_PIPE_FAILED"
+		run_supervised "$@"
+		;;
+	async)
+		[ "$#" -ge 3 ] || exit "$EXIT_PIPE_FAILED"
+		out_fd=$1
+		live_fd=$2
+		valid_number "$out_fd" && valid_number "$live_fd" ||
+			exit "$EXIT_PIPE_FAILED"
+		shift 2
+		( : 0</dev/null 1>"/proc/self/fd/$out_fd" ) ||
+			exit "$EXIT_PIPE_FAILED"
+		child_stdin=/dev/null
+		exec 0</dev/null 1>"/proc/self/fd/$out_fd" ||
+			exit "$EXIT_PIPE_FAILED"
+		run_supervised "$@"
+		;;
+	oneshot)
+		[ "$#" -ge 2 ] || exit "$EXIT_PIPE_FAILED"
+		limit=$1
+		valid_number "$limit" || exit "$EXIT_PIPE_FAILED"
+		shift
+
+		"$SETSID" "$@" &
+		child_pid=$!
+		valid_pid "$child_pid" || exit "$EXIT_PIPE_FAILED"
+
+		timed_out=0
+		trap 'timed_out=1' USR1
+		parent_pid=$$
+		(
+			sleep "$limit"
+			"$KILL" -USR1 "$parent_pid" || exit 0
+			kill_group "$child_pid"
+		) >/dev/null 2>&1 &
+		guard_pid=$!
+
+		if ! valid_pid "$guard_pid" || [ "$guard_pid" -eq "$child_pid" ]; then
+			kill_group "$child_pid" >/dev/null 2>&1 || :
+			wait "$child_pid" 2>/dev/null || :
+			exit "$EXIT_PIPE_FAILED"
+		fi
+
+		wait "$child_pid"
+		code=$?
+
+		if [ "$timed_out" -eq 1 ]; then
+			kill_group "$child_pid" >/dev/null 2>&1 || :
+			wait "$child_pid" 2>/dev/null || :
+			cleanup_guard
+			exit "$EXIT_TIMEOUT"
+		fi
+
+		kill_group "$child_pid" >/dev/null 2>&1 || :
+		cleanup_guard
+		exit "$code"
+		;;
+	*)
+		exit "$EXIT_PIPE_FAILED"
+		;;
+esac
